@@ -23,7 +23,7 @@ export const config = {
 
   // Free lane
   anonPromptsPerSession: num(env.ANON_PROMPTS_PER_SESSION, 5),
-  anonPromptsPerIpDay: num(env.ANON_PROMPTS_PER_IP_DAY, 8),
+  anonPromptsPerIpDay: num(env.ANON_PROMPTS_PER_IP_DAY, env.NODE_ENV === 'production' ? 8 : 100), // localhost shares one IP in dev
   freePromptLimit: num(env.FREE_PROMPT_LIMIT, 5),
   subsidyDailyCapUsd: num(env.SUBSIDY_DAILY_CAP_USD, 50),
   subsidyHourlyCapUsd: num(env.SUBSIDY_HOURLY_CAP_USD, 3),
