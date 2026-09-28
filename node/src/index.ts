@@ -12,6 +12,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { JobNewMsg, RegisterAck, RegisterPayload } from '@tide/shared';
 import { MockBackend, OllamaBackend, OpenAICompatBackend, type Backend } from './backends.ts';
+import { runImageNode } from './image.ts';
 
 const VERSION = '0.1.0';
 const CONFIG_PATH = join(homedir(), '.tide-node.json');
@@ -46,7 +47,14 @@ if (args.help || !args.token) {
   --upstream <url>        OpenAI-compatible base URL, e.g. http://127.0.0.1:8080/v1
   --upstream-model <id>   model id on the upstream server
   --upstream-key <key>    API key for the upstream server, if any
-  --save                  remember these options in ~/.tide-node.json`);
+  --save                  remember these options in ~/.tide-node.json
+
+  image mode (serves tide-image):
+  --mode image            run as an image node
+  --comfy <url>           ComfyUI URL (default http://127.0.0.1:8188)
+  --comfy-ckpt <file>     checkpoint for the built-in SDXL-style workflow
+  --comfy-workflow <json> custom ComfyUI API-format workflow with {{prompt}} {{negative}} {{width}} {{height}} {{steps}} {{cfg}} {{seed}}
+  --backend mock          procedural test images (no GPU)`);
   process.exit(args.token ? 0 : 1);
 }
 
@@ -145,4 +153,4 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((e) => { warn((e as Error).message); process.exit(1); });
+(args.mode === 'image' ? runImageNode(args, log, warn) : main()).catch((e) => { warn((e as Error).message); process.exit(1); });

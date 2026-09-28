@@ -5,13 +5,14 @@ import {
   type ChatMessage, type ErrorCode, type JobCompleteMsg, type JobErrorMsg, type JobNewMsg, type JobTokenMsg,
   type Lane, type NetworkStats, type NodeStatus, type NodeType, type RegisterAck, type RegisterPayload,
   type SubmitAck, type SubmitPayload, type ToolCall, type Usage,
+  IMAGE_CREDITS, IMAGE_MODEL, type ImageFailedMsg, type ImageJobMsg, type ImageParams, type ImageResultMsg,
 } from '@tide/shared';
 import { config } from './config.ts';
 import { db, now } from './db.ts';
 import { hashIp, resolveToken, type Principal, type User } from './auth.ts';
 import { recordEarning, refund, reserve, settle, type Hold } from './billing.ts';
 import { knownNodeModel, nodeServes, resolveModel, type ModelEntry } from './models.ts';
-import { BLOCKED_MESSAGE, scanText } from './safety.ts';
+import { BLOCKED_MESSAGE, scanImagePrompt, scanText } from './safety.ts';
 import { WEB_SEARCH_TOOL, formatForModel, searchProvider } from './search.ts';
 import {
   SPEED_CAP, SPEED_MIN_TOKENS, coherent, stripThink, gradeCanary, isBanned, makeCanary, recordCanary, strike, type Canary,
@@ -54,6 +55,26 @@ export interface JobSink {
 }
 
 const MAX_TOOL_ROUNDS = 5;
+const IMAGE_TIMEOUT = 180_000;
+
+export interface ImageSink {
+  onQueued?(position: number): void;
+  onDone(r: { image: string; params: ImageParams; credits: number }): void;
+  onError(error: string, code: ErrorCode): void;
+}
+
+interface ImageJob {
+  id: string;
+  user: User;
+  params: ImageParams;
+  hold: Hold;
+  status: 'queued' | 'running' | 'done';
+  nodeId?: string;
+  createdAt: number;
+  dispatchedAt?: number;
+  attempts: number;
+  sink?: ImageSink;
+}
 
 interface Job {
   id: string;
@@ -109,6 +130,8 @@ export class Orchestrator {
   nodes = new Map<string, NodeRec>();
   jobs = new Map<string, Job>();
   queue: string[] = [];
+  imageJobs = new Map<string, ImageJob>();
+  imageQueue: string[] = [];
   private submitTimes = new Map<string, number[]>();
   private completedDurations: number[] = [];
   private totals = { jobsCompleted: 0, tokensGenerated: 0 };
@@ -150,6 +173,8 @@ export class Orchestrator {
     s.on('job:token', (m: JobTokenMsg) => this.onNodeToken(s, m));
     s.on('job:complete', (m: JobCompleteMsg) => this.onNodeComplete(s, m));
     s.on('job:error', (m: JobErrorMsg) => this.onNodeError(s, m));
+    s.on('image:result', (m: ImageResultMsg) => this.onImageResult(s, m));
+    s.on('image:failed', (m: ImageFailedMsg) => this.onImageFailed(s, m));
 
     // ---- client side ----
     s.on('job:submit', (payload: SubmitPayload, ack?: (r: SubmitAck) => void) => {
@@ -193,12 +218,13 @@ export class Orchestrator {
     const owner = pr.user;
     if (isBanned(owner.id)) return { error: 'This account is banned from serving' };
 
-    const type: NodeType = p?.type === 'native' ? 'native' : 'browser';
-    if (type === 'native' && pr.kind !== 'node') return { error: 'Native nodes must authenticate with a node token (tnt_…)' };
+    const type: NodeType = p?.type === 'native' || p?.type === 'image' ? p.type : 'browser';
+    if (type !== 'browser' && pr.kind !== 'node') return { error: 'Native and image nodes must authenticate with a node token (tnt_…)' };
     const model = String(p?.model ?? '');
-    if (!knownNodeModel(model, type)) return { error: `Model "${model}" is not served by the network. Update your node.` };
+    const modelOk = type === 'image' ? model === IMAGE_MODEL : knownNodeModel(model, type);
+    if (!modelOk) return { error: `Model "${model}" is not served by the network. Update your node.` };
     const tps = Number(p?.tokPerSec) || 0;
-    if (tps < config.minTokPerSec) return { error: `Too slow: ${tps.toFixed(1)} tok/s (minimum ${config.minTokPerSec})` };
+    if (type !== 'image' && tps < config.minTokPerSec) return { error: `Too slow: ${tps.toFixed(1)} tok/s (minimum ${config.minTokPerSec})` };
 
     const mine = [...this.nodes.values()];
     if (mine.filter((n) => n.ownerId === owner.id).length >= config.maxNodesPerAccount) return { error: 'Too many nodes on this account' };
@@ -239,6 +265,13 @@ export class Orchestrator {
     this.nodes.delete(nodeId);
     node.socket.data.nodeId = undefined;
     log(`node ${nodeId} offline (${why})`);
+    const ij = node.jobId ? this.imageJobs.get(node.jobId) : undefined;
+    if (ij && ij.status === 'running') {
+      if (ij.attempts < 2) {
+        ij.status = 'queued'; ij.nodeId = undefined; ij.dispatchedAt = undefined;
+        this.imageQueue.unshift(ij.id);
+      } else this.failImage(ij, 'The image node went offline', 'NODE_GONE');
+    }
     const job = node.jobId ? this.jobs.get(node.jobId) : undefined;
     if (job && job.status === 'running') {
       if (job.canary) {
@@ -349,6 +382,7 @@ export class Orchestrator {
 
   // ------------------------------------------------------------------ dispatch
   processQueue() {
+    this.processImageQueue();
     for (let i = 0; i < this.queue.length; i++) {
       const job = this.jobs.get(this.queue[i]);
       if (!job || job.status !== 'queued') { this.queue.splice(i--, 1); continue; }
@@ -601,6 +635,117 @@ export class Orchestrator {
       job.inputTokens, outTokens, credits, job.dispatchedAt ? now() - job.dispatchedAt : null, job.createdAt);
   }
 
+  // ------------------------------------------------------------------ image lane
+  submitImage(req: { principal: Principal; ip: string; params: ImageParams; nsfw: boolean; sink: ImageSink }): { jobId: string } | { error: string; code: ErrorCode } {
+    const user = req.principal.user;
+    if (user.kind === 'anon') return { error: 'Sign in to create images', code: 'UNAUTHORIZED' };
+    if (!req.params.prompt.trim()) return { error: 'Prompt is empty', code: 'BAD_REQUEST' };
+    const v = scanImagePrompt(`${req.params.prompt}\n${req.params.negativePrompt ?? ''}`, req.nsfw);
+    if (!v.safe) {
+      return v.reason === 'nsfw_disabled'
+        ? { error: 'This prompt needs the 18+ toggle', code: 'SAFETY' }
+        : { error: 'Request blocked by safety filter', code: 'SAFETY' };
+    }
+    const nodes = [...this.nodes.values()].filter((n) => n.type === 'image');
+    if (nodes.length === 0) return { error: 'No image nodes are online right now', code: 'NO_CAPACITY' };
+    const r = reserve(user, IMAGE_CREDITS, { viaApiKey: req.principal.kind === 'apikey', ipHash: hashIp(req.ip), hasFreeCapacity: nodes.some((n) => n.accountAgeOk) });
+    if ('error' in r) return r;
+    const job: ImageJob = {
+      id: 'img_' + randomUUID().replace(/-/g, '').slice(0, 20), user, params: req.params, hold: r.hold,
+      status: 'queued', createdAt: now(), attempts: 0, sink: req.sink,
+    };
+    this.imageJobs.set(job.id, job);
+    this.imageQueue.push(job.id);
+    this.processImageQueue();
+    return { jobId: job.id };
+  }
+
+  abortImage(jobId: string) {
+    const j = this.imageJobs.get(jobId);
+    if (j && j.status !== 'done') { j.sink = undefined; this.failImage(j, 'Stopped', 'ABORTED'); }
+  }
+
+  private processImageQueue() {
+    for (let i = 0; i < this.imageQueue.length; i++) {
+      const job = this.imageJobs.get(this.imageQueue[i]);
+      if (!job || job.status !== 'queued') { this.imageQueue.splice(i--, 1); continue; }
+      const freeLane = job.hold.lane === 'free' || job.hold.subsidyKind === 'free_grant';
+      const idle = [...this.nodes.values()].filter((n) => n.type === 'image' && n.status === 'idle' && (!freeLane || n.accountAgeOk));
+      if (idle.length === 0) { job.sink?.onQueued?.(i + 1); continue; }
+      this.imageQueue.splice(i--, 1);
+      const node = idle[Math.floor(Math.random() * idle.length)];
+      job.status = 'running'; job.nodeId = node.id; job.dispatchedAt = now(); job.attempts++;
+      node.status = 'busy'; node.jobId = job.id;
+      const msg: ImageJobMsg = { jobId: job.id, params: job.params };
+      node.socket.emit('image:job', msg);
+      this.emitNodeStatus(node.ownerId);
+    }
+  }
+
+  private imageFor(s: Socket, jobId: string) {
+    const node = this.nodes.get(s.data.nodeId);
+    const job = this.imageJobs.get(jobId);
+    if (!node || !job || job.nodeId !== node.id || job.status !== 'running') return null;
+    return { node, job };
+  }
+
+  private onImageResult(s: Socket, m: ImageResultMsg) {
+    const r = this.imageFor(s, m?.jobId);
+    if (!r) return;
+    const { node, job } = r;
+    const png = pngSize(typeof m.image === 'string' ? m.image : '');
+    if (!png || png.width !== job.params.width || png.height !== job.params.height) {
+      log(`invalid image from ${node.id}: ${png ? `${png.width}x${png.height}` : 'not a PNG'}`);
+      if (strike(node.ownerId, 'invalid image')) this.kick(node, 'banned');
+      this.failImage(job, 'The node returned an invalid image', 'NODE_ERROR');
+      return;
+    }
+    const charged = settle(job.hold, IMAGE_CREDITS, job.id);
+    recordEarning({ jobId: job.id, ownerId: node.ownerId, payerId: job.user.id, hold: job.hold, charged, tokens: 0 });
+    node.jobsCompleted++;
+    this.totals.jobsCompleted++;
+    this.persistImage(job, node, 'completed', charged);
+    job.sink?.onDone({ image: m.image, params: job.params, credits: charged });
+    this.finishImage(job);
+  }
+
+  private onImageFailed(s: Socket, m: ImageFailedMsg) {
+    const r = this.imageFor(s, m?.jobId);
+    if (r) this.failImage(r.job, `Image node error: ${String(m.error ?? 'unknown').slice(0, 200)}`, 'NODE_ERROR');
+  }
+
+  private failImage(job: ImageJob, error: string, code: ErrorCode) {
+    if (job.status === 'done') return;
+    const node = job.nodeId ? this.nodes.get(job.nodeId) : undefined;
+    refund(job.hold, job.id);
+    if (node && job.status === 'running') node.socket.emit('image:cancel', { jobId: job.id });
+    this.persistImage(job, node, code === 'ABORTED' ? 'aborted' : 'failed', 0);
+    job.sink?.onError(error, code);
+    this.finishImage(job);
+  }
+
+  private finishImage(job: ImageJob) {
+    job.status = 'done';
+    job.sink = undefined;
+    this.imageJobs.delete(job.id);
+    const qi = this.imageQueue.indexOf(job.id);
+    if (qi >= 0) this.imageQueue.splice(qi, 1);
+    const node = job.nodeId ? this.nodes.get(job.nodeId) : undefined;
+    if (node && node.jobId === job.id) {
+      node.status = 'idle'; node.jobId = undefined; node.idleSince = now();
+      this.emitNodeStatus(node.ownerId);
+    }
+    setTimeout(() => this.processImageQueue(), 50);
+  }
+
+  private persistImage(job: ImageJob, node: NodeRec | undefined, status: string, credits: number) {
+    db.prepare(
+      `INSERT OR REPLACE INTO jobs(id, user_id, node_id, node_owner, model, lane, source, status, input_tokens, output_tokens, credits, duration_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'image', ?, 0, 0, ?, ?, ?)`,
+    ).run(job.id, job.user.id, node?.id ?? null, node?.ownerId ?? null, IMAGE_MODEL, job.hold.lane, status, credits,
+      job.dispatchedAt ? now() - job.dispatchedAt : null, job.createdAt);
+  }
+
   // ------------------------------------------------------------------ canaries
   private sendCanary(node: NodeRec) {
     if (!this.nodes.has(node.id) || node.status !== 'idle' || this.queue.length > 0) return;
@@ -628,6 +773,10 @@ export class Orchestrator {
   // ------------------------------------------------------------------ liveness
   private sweep() {
     const t = now();
+    for (const ij of [...this.imageJobs.values()]) {
+      if (ij.status === 'queued' && t - ij.createdAt > config.queueTimeout) this.failImage(ij, 'Timed out waiting for an image node', 'TIMEOUT');
+      else if (ij.status === 'running' && t - (ij.dispatchedAt ?? t) > IMAGE_TIMEOUT) this.failImage(ij, 'The image node took too long', 'TIMEOUT');
+    }
     for (const job of [...this.jobs.values()]) {
       if (job.status === 'queued' && t - job.createdAt > config.queueTimeout) {
         this.failJob(job, 'Timed out waiting for a free node', 'TIMEOUT');
@@ -658,15 +807,17 @@ export class Orchestrator {
     for (const n of nodes) {
       const e = [resolveModel('tide-max'), resolveModel('tide-lite'), resolveModel('tide-dev')].map((r) => r?.entry).find((x) => x && nodeServes(x, n.model, n.type));
       if (e) byModel[e.id] = (byModel[e.id] ?? 0) + 1;
+      else if (n.type === 'image') byModel[IMAGE_MODEL] = (byModel[IMAGE_MODEL] ?? 0) + 1;
     }
     const speeds = nodes.map((n) => this.speed(n));
     return {
       nodesOnline: nodes.length,
       browserNodes: nodes.filter((n) => n.type === 'browser').length,
       nativeNodes: nodes.filter((n) => n.type === 'native').length,
+      imageNodes: nodes.filter((n) => n.type === 'image').length,
       byModel,
       busy: nodes.filter((n) => n.status === 'busy').length,
-      queueDepth: this.queue.length,
+      queueDepth: this.queue.length + this.imageQueue.length,
       jobsCompleted: this.totals.jobsCompleted,
       tokensGenerated: this.totals.tokensGenerated,
       avgTokPerSec: speeds.length ? +(speeds.reduce((a, b) => a + b, 0) / speeds.length).toFixed(1) : 0,
@@ -748,3 +899,11 @@ export function trimToBudget(messages: ChatMessage[], budget: number): ChatMessa
 }
 
 const log = (...a: unknown[]) => console.log(`[orch ${new Date().toISOString().slice(11, 19)}]`, ...a);
+
+/** Width/height from a base64 PNG's IHDR chunk, or null if it isn't a PNG. */
+export function pngSize(b64: string): { width: number; height: number; bytes: number } | null {
+  if (!b64 || b64.length > 16_000_000) return null;
+  const head = Buffer.from(b64.slice(0, 64), 'base64');
+  if (head.length < 24 || head.readUInt32BE(0) !== 0x89504e47 || head.toString('ascii', 12, 16) !== 'IHDR') return null;
+  return { width: head.readUInt32BE(16), height: head.readUInt32BE(20), bytes: Math.floor(b64.length * 0.75) };
+}

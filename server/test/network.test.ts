@@ -297,3 +297,47 @@ test('admin console: auth, credits, payout resolution, unban', async () => {
   assert.ok((await adm('/unban', { userId: banned.user_id })).j.unbanned);
   assert.ok((await adm('/audit')).j.rows.length >= 3);
 });
+
+test('image lane: generate, bill 10 credits, reject wrong-size PNGs, gate anon + NSFW', async () => {
+  const { encodePng } = await import('../../node/src/image.ts');
+  let cheat = false;
+  const { token: ot } = await post('/api/auth/dev', { name: 'owner-image' });
+  const { token: nt } = await post('/api/node-tokens', {}, ot);
+  const s = await connect(nt);
+  const ack: any = await s.emitWithAck('node:register', { model: 'tide-image', tokPerSec: 0, type: 'image' });
+  assert.ok(ack.nodeId, JSON.stringify(ack));
+  s.on('image:job', ({ jobId, params }: any) => {
+    const w = cheat ? 64 : params.width, h = cheat ? 64 : params.height;
+    s.emit('image:result', { jobId, image: encodePng(w, h, new Uint8Array(w * h * 3).fill(120)).toString('base64') });
+  });
+
+  const { token } = await post('/api/auth/dev', { name: 'artist' });
+  await post('/api/credits/dev-add', { amount: 100 }, token);
+  db.prepare("UPDATE users SET free_prompts_used = 99 WHERE display_name = 'artist'").run();
+  db.prepare("INSERT INTO grant_usage(user_id, day, used) SELECT id, ?, 1000 FROM users WHERE display_name = 'artist'").run(new Date().toISOString().slice(0, 10));
+
+  const r = await post('/api/images/generate', { prompt: 'a lighthouse at night', width: 640, height: 512, seed: 7 }, token);
+  assert.match(r.image, /^data:image\/png;base64,/);
+  assert.equal(r.width, 640);
+  assert.equal(r.credits_charged, 10);
+  assert.equal((await get('/api/credits', token)).balance, 90);
+
+  const { key } = await post('/api/api-keys', {}, token);
+  const v1 = await fetch(BASE + '/v1/images/generations', { method: 'POST', headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'waves', size: '512x768' }) }).then((x) => x.json() as Promise<any>);
+  assert.ok(v1.data[0].b64_json.length > 100, JSON.stringify(v1).slice(0, 200));
+  assert.equal(v1.size, '512x768');
+  assert.equal((await get('/api/credits', token)).balance, 80);
+
+  cheat = true;
+  const bad = await fetch(BASE + '/api/images/generate', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'x', width: 512, height: 512 }) });
+  assert.equal(bad.status, 503);
+  assert.equal((await get('/api/credits', token)).balance, 80, 'refunded');
+  assert.equal((await get('/api/earnings', ot)).reputation.strikes, 1);
+
+  const nsfw = await fetch(BASE + '/api/images/generate', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'a nude figure study' }) });
+  assert.equal(nsfw.status, 400);
+  const anon = await post('/api/auth/anon', {});
+  const a = await fetch(BASE + '/api/images/generate', { method: 'POST', headers: { authorization: `Bearer ${anon.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'waves' }) });
+  assert.equal(a.status, 403);
+  s.close();
+});

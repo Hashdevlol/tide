@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth';
 
 export const NAV_LINKS = [
   { to: '/chat', label: 'Chat' },
+  { to: '/create', label: 'Create' },
   { to: '/earn', label: 'Earn' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/network', label: 'Network' },

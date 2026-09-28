@@ -3,7 +3,7 @@ import type { ChatMessage } from '@tide/shared';
 import { db, now } from './db.ts';
 
 export const STRIKE_LIMIT = 5;
-export const SPEED_CAP = { browser: 150, native: 250 } as const; // tok/s above this is not a real model
+export const SPEED_CAP = { browser: 150, native: 250, image: Infinity } as const; // tok/s above this is not a real model
 export const SPEED_MIN_TOKENS = 20;
 
 export const stripThink = (s: string) => s.replace(/<think>[\s\S]*?(<\/think>|$)/g, '').trim();

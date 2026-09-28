@@ -24,3 +24,15 @@ export function scanText(text: string): SafetyVerdict {
 }
 
 export const BLOCKED_MESSAGE = '[Content blocked by safety filter]';
+
+/**
+ * Image prompts: the CSAM floor always applies; with the 18+ toggle off, any sexual term is refused
+ * (so SFW users don't get surprised by explicit output).
+ */
+export function scanImagePrompt(prompt: string, nsfwAllowed: boolean): SafetyVerdict {
+  const v = scanText(prompt);
+  if (!v.safe) return v;
+  if (MINOR.test(prompt) && SEXUAL.test(prompt)) return { safe: false, reason: 'csam' };
+  if (!nsfwAllowed && SEXUAL.test(prompt)) return { safe: false, reason: 'nsfw_disabled' };
+  return { safe: true };
+}

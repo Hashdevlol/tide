@@ -55,6 +55,14 @@ npx tsx node/src/index.ts --token tnt_… --backend openai --upstream http://127
 
 Or open **Earn → In this browser** to serve `tide-lite` from a WebGPU tab.
 
+Image nodes serve the `/create` studio and `/v1/images/generations`:
+
+```bash
+npx tsx node/src/index.ts --mode image --token tnt_… --comfy http://127.0.0.1:8188 --comfy-ckpt sd_xl_base_1.0.safetensors
+npx tsx node/src/index.ts --mode image --token tnt_… --comfy-workflow flux-api.json   # any ComfyUI API workflow with {{prompt}} {{width}} … placeholders
+npx tsx node/src/index.ts --mode image --token tnt_… --backend mock                   # procedural test images, no GPU
+```
+
 ## Deploy
 
 One process serves the API, the socket orchestrator and the built web app:
@@ -119,7 +127,9 @@ cd current && python -m pytest tests/test_plan.py tests/test_verify*.py   # Curr
 | ✅ | $TIDE custodial staking, rewards, keeper (dormant until `TIDE_TOKEN_MINT` is set) |
 | ⏳ | Current swarm integration (node announce → placement → ring → receipts), needs NVIDIA GPUs to validate |
 | ✅ | chat web search (`web_search` tool: Brave with `BRAVE_API_KEY`, otherwise keyless DuckDuckGo) |
-| ⏳ | image generation, self-custody on-chain staking program |
+| ✅ | image generation: `/create` studio, `/v1/images/generations`, image nodes via ComfyUI (`--mode image`), 10 credits/image |
+| ✅ | operator console at `/admin` (set `ADMIN_SECRET`) |
+| ⏳ | self-custody on-chain staking program |
 
 ## Attribution
 

@@ -16,7 +16,7 @@ export interface ChatMessage {
   name?: string;
 }
 
-export type NodeType = 'native' | 'browser';
+export type NodeType = 'native' | 'browser' | 'image';
 
 export interface NodeCapabilities {
   tools?: boolean;
@@ -98,6 +98,7 @@ export interface NetworkStats {
   nodesOnline: number;
   browserNodes: number;
   nativeNodes: number;
+  imageNodes: number;
   byModel: Record<string, number>;
   busy: number;
   queueDepth: number;
@@ -133,3 +134,36 @@ export const PLANS = {
 export type PlanId = keyof typeof PLANS;
 
 export const estimateTokens = (s: string) => Math.ceil((s?.length ?? 0) / 4);
+
+// ---- image generation ----
+export const IMAGE_MODEL = 'tide-image';
+export const IMAGE_CREDITS = 10; // flat price per image (~$0.01)
+
+export interface ImageParams {
+  prompt: string;
+  negativePrompt?: string;
+  width: number;   // 512..1536, multiple of 64
+  height: number;
+  steps: number;   // 10..60
+  cfg: number;     // 1..15
+  seed: number;
+}
+/** orchestrator -> image node */
+export interface ImageJobMsg { jobId: string; params: ImageParams }
+/** image node -> orchestrator */
+export interface ImageResultMsg { jobId: string; image: string /* base64 PNG */ }
+export interface ImageFailedMsg { jobId: string; error: string }
+
+const snap64 = (v: number, d: number) => Math.min(1536, Math.max(512, Math.round((Number(v) || d) / 64) * 64));
+const clamp = (v: number, lo: number, hi: number, d: number) => Math.min(hi, Math.max(lo, Number.isFinite(+v) && v !== null ? +v : d));
+export function normalizeImageParams(p: Partial<ImageParams> & { prompt: string }): ImageParams {
+  return {
+    prompt: String(p.prompt ?? '').slice(0, 2000),
+    negativePrompt: p.negativePrompt ? String(p.negativePrompt).slice(0, 1000) : undefined,
+    width: snap64(p.width as number, 1024),
+    height: snap64(p.height as number, 1024),
+    steps: Math.round(clamp(p.steps as number, 10, 60, 28)),
+    cfg: clamp(p.cfg as number, 1, 15, 4),
+    seed: Number.isInteger(p.seed) && (p.seed as number) >= 0 ? (p.seed as number) % 2 ** 32 : Math.floor(Math.random() * 2 ** 32),
+  };
+}

@@ -21,7 +21,7 @@ export function createTideServer(): TideServer {
   });
 
   const http = createServer(app);
-  const io = new Server(http, { cors: { origin: '*' }, maxHttpBufferSize: 4e6, pingInterval: 20_000, pingTimeout: 25_000 });
+  const io = new Server(http, { cors: { origin: '*' }, maxHttpBufferSize: 16e6, pingInterval: 20_000, pingTimeout: 25_000 });
   const orch = new Orchestrator(io);
 
   app.use(createApi(orch));

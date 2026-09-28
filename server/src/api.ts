@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import {
   CREDITS_PER_USD, CREDITS_PER_USD_PURCHASED, PLANS, PRICE_IN_PER_M_USD, PRICE_OUT_PER_M_USD,
   type ChatMessage, type ErrorCode, type PlanId,
+  IMAGE_CREDITS, IMAGE_MODEL, normalizeImageParams, type ImageParams,
 } from '@tide/shared';
 import { db, now, utcDay } from './db.ts';
 import { config } from './config.ts';
@@ -320,6 +321,7 @@ export function createApi(orch: Orchestrator) {
   v1.get('/models', (_req, res) => {
     res.json({
       object: 'list',
+      image_models: [{ id: IMAGE_MODEL, object: 'model', owned_by: 'tide', available: orch.stats().imageNodes > 0, nodes: orch.stats().imageNodes, pricing: { type: 'per_image', credits: IMAGE_CREDITS } }],
       data: publicCatalog().map((m) => ({
         id: m.id,
         object: 'model',
@@ -338,6 +340,25 @@ export function createApi(orch: Orchestrator) {
   v1.get('/balance', apiAuth, (req: AuthedReq, res) => {
     const credits = getBalance(req.principal!.user.id);
     res.json({ object: 'balance', credits, usd: +(credits / CREDITS_PER_USD).toFixed(4), grant: grantState(req.principal!.user) });
+  });
+
+  v1.post('/images/generations', apiAuth, async (req: AuthedReq, res) => {
+    const b = req.body ?? {};
+    if (typeof b.prompt !== 'string' || !b.prompt.trim()) return oaiError(res, 400, '`prompt` is required', 'invalid_request_error');
+    if (b.n !== undefined && Number(b.n) !== 1) return oaiError(res, 400, 'Only n=1 is supported', 'invalid_request_error');
+    if (b.response_format && b.response_format !== 'b64_json') return oaiError(res, 400, 'Only response_format=b64_json is supported', 'invalid_request_error');
+    const [w, h] = String(b.size ?? '1024x1024').split('x').map(Number);
+    const params = normalizeImageParams({ prompt: b.prompt, negativePrompt: b.negative_prompt, width: w, height: h, seed: b.seed, steps: b.steps, cfg: b.cfg });
+    const out = await runImage(req, res, params, !!b.nsfw);
+    if (res.headersSent || res.writableEnded) return;
+    if (!out.ok) {
+      const [status, type] = httpFor(out.code);
+      return oaiError(res, out.code === 'UNAUTHORIZED' ? 403 : status, out.error, type, out.code);
+    }
+    res.json({
+      created: Math.floor(now() / 1000), data: [{ b64_json: out.image }], model: IMAGE_MODEL,
+      seed: out.params.seed, size: `${out.params.width}x${out.params.height}`, credits_charged: out.credits,
+    });
   });
 
   v1.post('/chat/completions', apiAuth, (req: AuthedReq, res) => {
@@ -437,6 +458,44 @@ export function createApi(orch: Orchestrator) {
     jobId = r.jobId;
     orch.processQueue();
     res.on('close', () => { if (!finished) { end(); orch.abort(jobId, true); } });
+  });
+
+  // ------------------------------------------------------------------ images
+  /** Run one image job and resolve when the node returns it (or fails). Aborts if the client leaves. */
+  function runImage(req: AuthedReq, res: Response, params: ImageParams, nsfw: boolean) {
+    return new Promise<{ ok: true; image: string; params: ImageParams; credits: number } | { ok: false; error: string; code: ErrorCode }>((resolve) => {
+      let jobId = '';
+      let settled = false;
+      const r = orch.submitImage({
+        principal: req.principal!, ip: ipOf(req), params, nsfw,
+        sink: {
+          onDone: (d) => { settled = true; resolve({ ok: true, ...d }); },
+          onError: (error, code) => { settled = true; resolve({ ok: false, error, code }); },
+        },
+      });
+      if ('error' in r) return resolve({ ok: false, error: r.error, code: r.code });
+      jobId = r.jobId;
+      res.on('close', () => { if (!settled) orch.abortImage(jobId); });
+    });
+  }
+
+  const imgAuth = auth(true, ['session', 'apikey']);
+  app.post('/api/images/generate', imgAuth, async (req: AuthedReq, res) => {
+    const b = req.body ?? {};
+    const params = normalizeImageParams({
+      prompt: String(b.prompt ?? ''), negativePrompt: b.negative_prompt ?? b.negativePrompt,
+      width: b.width, height: b.height, steps: b.steps, cfg: b.cfg, seed: b.seed,
+    });
+    const out = await runImage(req, res, params, !!b.nsfw);
+    if (res.headersSent || res.writableEnded) return;
+    if (!out.ok) {
+      const [status] = httpFor(out.code);
+      return res.status(out.code === 'UNAUTHORIZED' ? 403 : status).json({ error: out.error, code: out.code });
+    }
+    res.json({
+      image: `data:image/png;base64,${out.image}`, model: IMAGE_MODEL, seed: out.params.seed,
+      width: out.params.width, height: out.params.height, credits_charged: out.credits,
+    });
   });
 
   app.use('/api/admin', createAdmin(orch));
