@@ -4,6 +4,7 @@ import {
 import { db, now, tx, utcDay, utcHour } from './db.ts';
 import { config } from './config.ts';
 import type { User } from './auth.ts';
+import { hasNodeBoost } from './staking.ts';
 
 /**
  * A credit reservation for one job. Created before dispatch, settled once to the
@@ -177,9 +178,9 @@ export function settle(h: Hold, actual: number, ref: string): number {
 }
 
 // ---------- earnings + treasury ----------
-export function nodeShareFor(_ownerId: string): number {
-  // Staked-boost hook: 0.8 once the owner has >= 500k $TIDE matured stake (phase 2).
-  return NODE_SHARE;
+/** 70% of revenue, or 80% once the owner has >= 500k $TIDE matured stake. */
+export function nodeShareFor(ownerId: string): number {
+  return hasNodeBoost(ownerId) ? NODE_SHARE_STAKED : NODE_SHARE;
 }
 
 /**

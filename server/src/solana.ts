@@ -39,21 +39,21 @@ let _decimals: number | null = null;
 export function solanaEnabled(): boolean {
   return !!(env.TREASURY_WALLET_KEY && env.DEPOSIT_WALLET_KEY && /^[0-9a-f]{64}$/i.test(env.DEPOSIT_WALLET_KEY));
 }
-function conn() { return (_conn ??= new Connection(solanaConfig.rpc, 'confirmed')); }
-function treasury() { return (_treasury ??= parseKeypair(env.TREASURY_WALLET_KEY!)); }
+export function conn() { return (_conn ??= new Connection(solanaConfig.rpc, 'confirmed')); }
+export function treasury() { return (_treasury ??= parseKeypair(env.TREASURY_WALLET_KEY!)); }
 function aesKey() { return (_aesKey ??= Buffer.from(env.DEPOSIT_WALLET_KEY!, 'hex')); }
 const mint = () => new PublicKey(solanaConfig.usdcMint);
 async function decimals() { return (_decimals ??= (await getMint(conn(), mint())).decimals); }
 export const treasuryAddress = () => (solanaEnabled() ? treasury().publicKey.toBase58() : null);
 
 // ------------------------------------------------------------------ custody
-function encrypt(secret: Uint8Array): string {
+export function encrypt(secret: Uint8Array): string {
   const iv = randomBytes(12);
   const c = createCipheriv('aes-256-gcm', aesKey(), iv);
   const enc = Buffer.concat([c.update(secret), c.final()]);
   return `${iv.toString('hex')}:${c.getAuthTag().toString('hex')}:${enc.toString('hex')}`;
 }
-function decrypt(stored: string): Uint8Array {
+export function decrypt(stored: string): Uint8Array {
   const [iv, tag, data] = stored.split(':').map((h) => Buffer.from(h, 'hex'));
   const d = createDecipheriv('aes-256-gcm', aesKey(), iv);
   d.setAuthTag(tag);
@@ -84,7 +84,7 @@ async function tokenBalance(owner: PublicKey): Promise<bigint> {
   }
 }
 
-const priority = () => ComputeBudgetProgram.setComputeUnitPrice({ microLamports: Number(env.PRIORITY_FEE_MICROLAMPORTS) || 50_000 });
+export const priority = () => ComputeBudgetProgram.setComputeUnitPrice({ microLamports: Number(env.PRIORITY_FEE_MICROLAMPORTS) || 50_000 });
 
 // ------------------------------------------------------------------ plan intents
 export function openIntent(userId: string) {
