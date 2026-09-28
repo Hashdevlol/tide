@@ -55,8 +55,19 @@ npx tsx node/src/index.ts --token tnt_… --backend openai --upstream http://127
 
 Or open **Earn → In this browser** to serve `tide-lite` from a WebGPU tab.
 
-Production: `npm run build && NODE_ENV=production npm start` — the server serves `web/dist` itself.
-Configuration lives in `server/.env` (see `server/.env.example`).
+## Deploy
+
+One process serves the API, the socket orchestrator and the built web app:
+
+```bash
+npm ci && npm run build && NODE_ENV=production npm start      # or:
+docker compose up -d --build                                   # server + keeper, SQLite on a volume
+```
+
+Put it behind a TLS proxy (Caddy / nginx) that forwards websockets (`/socket.io/`) and sets
+`X-Forwarded-For`. Configuration lives in `server/.env` (see `server/.env.example`); in production set at
+least `TIDE_SECRET`, and `TREASURY_WALLET_KEY` + `DEPOSIT_WALLET_KEY` + `SOLANA_CLUSTER=mainnet-beta` +
+`USDC_MINT` for real payments. Production disables dev login, test credits and the mock model.
 
 ## API
 
@@ -107,7 +118,8 @@ cd current && python -m pytest tests/test_plan.py tests/test_verify*.py   # Curr
 | ✅ | USDC deposits + plan checkout + payouts (code complete; devnet run needs a funded treasury) |
 | ✅ | $TIDE custodial staking, rewards, keeper (dormant until `TIDE_TOKEN_MINT` is set) |
 | ⏳ | Current swarm integration (node announce → placement → ring → receipts), needs NVIDIA GPUs to validate |
-| ⏳ | image generation, web-search tool, self-custody on-chain staking program |
+| ✅ | chat web search (`web_search` tool: Brave with `BRAVE_API_KEY`, otherwise keyless DuckDuckGo) |
+| ⏳ | image generation, self-custody on-chain staking program |
 
 ## Attribution
 
