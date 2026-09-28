@@ -12,6 +12,7 @@ import { io as ioc, type Socket } from 'socket.io-client';
 import type { JobNewMsg } from '@tide/shared';
 
 process.env.TIDE_DB = join(mkdtempSync(join(tmpdir(), 'tide-net-')), 't.db');
+process.env.ADMIN_SECRET = 'test-admin-secret-0123456789';
 const { createTideServer } = await import('../src/app.ts');
 const { db } = await import('../src/db.ts');
 
@@ -266,4 +267,33 @@ test('chat web_search: node calls the tool, orchestrator searches, answer contin
   assert.match(r.tokens.join(''), /Let me check\. According to example\.com/);
   assert.ok(r.done.usage.outputTokens >= 10);
   s.close();
+});
+
+test('admin console: auth, credits, payout resolution, unban', async () => {
+  const H = { 'content-type': 'application/json', 'x-admin-token': process.env.ADMIN_SECRET! };
+  const adm = (path: string, body?: unknown) =>
+    fetch(BASE + '/api/admin' + path, body ? { method: 'POST', headers: H, body: JSON.stringify(body) } : { headers: H }).then(async (r) => ({ status: r.status, j: await r.json() as any }));
+  assert.equal((await fetch(BASE + '/api/admin/overview')).status, 401);
+  const ov = await adm('/overview');
+  assert.equal(ov.status, 200);
+  assert.ok(ov.j.jobsAll.n > 0 && Array.isArray(ov.j.nodes));
+
+  const { token, user } = await post('/api/auth/dev', { name: 'admin-target' });
+  assert.equal((await adm('/credits', { userId: user.id, delta: 250, reason: 'support' })).j.balance, 250);
+  assert.equal((await adm('/credits', { userId: user.id, delta: -1000 })).status, 400);
+  const found = await adm('/users?q=admin-target');
+  assert.equal(found.j.users[0].credits, 250);
+
+  // A payout that failed on-chain is released back to the owner's balance.
+  db.prepare('INSERT INTO node_earnings(job_id, user_id, usd, tokens, created_at) VALUES (?, ?, ?, ?, ?)').run('adm-j', user.id, 4, 10, Date.now());
+  const p = await post('/api/payouts', { address: 'So11111111111111111111111111111111111111112', amount: 3 }, token);
+  assert.ok(p.id);
+  assert.equal((await get('/api/earnings', token)).balance.available, 1);
+  assert.equal((await adm(`/payouts/${p.id}`, { status: 'completed' })).status, 400, 'needs tx');
+  assert.equal((await adm(`/payouts/${p.id}`, { status: 'failed' })).j.status, 'failed');
+  assert.equal((await get('/api/earnings', token)).balance.available, 4);
+
+  const banned = db.prepare("SELECT user_id FROM node_reputation WHERE banned = 1 LIMIT 1").get() as { user_id: string };
+  assert.ok((await adm('/unban', { userId: banned.user_id })).j.unbanned);
+  assert.ok((await adm('/audit')).j.rows.length >= 3);
 });

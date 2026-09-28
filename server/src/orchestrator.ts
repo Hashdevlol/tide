@@ -681,6 +681,22 @@ export class Orchestrator {
 
   private broadcastStats() { this.io.emit('stats:update', this.stats()); }
 
+  /** Operator view: every live node with its owner and address. */
+  adminNodes() {
+    return [...this.nodes.values()].map((n) => ({
+      nodeId: n.id, ownerId: n.ownerId, ip: n.ip, model: n.model, type: n.type, tools: n.tools, status: n.status,
+      tokPerSec: +this.speed(n).toFixed(1), jobsCompleted: n.jobsCompleted, tokensGenerated: n.tokensGenerated,
+      connectedAt: n.connectedAt, accountAgeOk: n.accountAgeOk,
+    }));
+  }
+
+  adminKick(nodeId: string, reason: string): boolean {
+    const n = this.nodes.get(nodeId);
+    if (!n) return false;
+    this.kick(n, reason);
+    return true;
+  }
+
   nodesForOwner(ownerId: string): NodeStatus[] {
     return [...this.nodes.values()].filter((n) => n.ownerId === ownerId).map((n) => ({
       nodeId: n.id, model: n.model, type: n.type, status: n.status, tokPerSec: +this.speed(n).toFixed(1),

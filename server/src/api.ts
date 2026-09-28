@@ -19,6 +19,7 @@ import {
   checkDeposit, createIntent, explorerTx, finishPayoutOnchain, getOrCreateDepositWallet, openIntent, releaseIntent, solanaConfig, solanaEnabled,
 } from './solana.ts';
 import * as staking from './staking.ts';
+import { createAdmin } from './admin.ts';
 
 type AuthedReq = Request & { principal?: Principal };
 
@@ -438,6 +439,7 @@ export function createApi(orch: Orchestrator) {
     res.on('close', () => { if (!finished) { end(); orch.abort(jobId, true); } });
   });
 
+  app.use('/api/admin', createAdmin(orch));
   app.use('/v1', v1);
   app.use('/api/v1', v1);
   return app;
