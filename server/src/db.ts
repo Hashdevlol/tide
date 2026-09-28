@@ -157,6 +157,41 @@ CREATE TABLE IF NOT EXISTS treasury_ledger (
   created_at INTEGER NOT NULL
 );
 
+-- Custodial USDC deposit address per user. Secret key is AES-256-GCM encrypted.
+CREATE TABLE IF NOT EXISTS deposit_wallets (
+  user_id          TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  public_key       TEXT UNIQUE NOT NULL,
+  encrypted_secret TEXT NOT NULL,
+  created_at       INTEGER NOT NULL
+);
+-- Raw token units already converted to credits but not yet swept (compare-and-set marker).
+CREATE TABLE IF NOT EXISTS deposit_progress (
+  user_id  TEXT NOT NULL,
+  mint     TEXT NOT NULL,
+  credited INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, mint)
+);
+-- A sweep whose outcome we have not confirmed yet (reconciled on the next check).
+CREATE TABLE IF NOT EXISTS sweep_pending (
+  user_id     TEXT NOT NULL,
+  mint        TEXT NOT NULL,
+  sig         TEXT NOT NULL,
+  amount      INTEGER NOT NULL,
+  last_valid  INTEGER NOT NULL,
+  PRIMARY KEY (user_id, mint)
+);
+CREATE TABLE IF NOT EXISTS plan_intents (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id      TEXT NOT NULL,
+  plan         TEXT NOT NULL,
+  months       INTEGER NOT NULL,
+  expected_usd REAL NOT NULL,
+  paid_usd     REAL NOT NULL DEFAULT 0,
+  status       TEXT NOT NULL,              -- 'open' | 'paid' | 'cancelled' | 'expired'
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER NOT NULL
+);
+
 -- Free-lane subsidy spend per UTC day / hour (worker payouts funded by the treasury).
 CREATE TABLE IF NOT EXISTS subsidy_spend (
   period TEXT PRIMARY KEY,                  -- 'd:2026-09-28' | 'h:2026-09-28T14'

@@ -15,6 +15,9 @@ import {
 } from './billing.ts';
 import { publicCatalog, resolveModel } from './models.ts';
 import type { Orchestrator } from './orchestrator.ts';
+import {
+  checkDeposit, createIntent, explorerTx, finishPayoutOnchain, getOrCreateDepositWallet, openIntent, releaseIntent, solanaConfig, solanaEnabled,
+} from './solana.ts';
 
 type AuthedReq = Request & { principal?: Principal };
 
@@ -199,18 +202,61 @@ export function createApi(orch: Orchestrator) {
   });
 
   const payoutLimit = limiter(1, 5_000);
-  app.post('/api/payouts', session, signedIn, (req: AuthedReq, res) => {
+  app.post('/api/payouts', session, signedIn, async (req: AuthedReq, res) => {
     const uid = req.principal!.user.id;
     if (!payoutLimit(uid)) return res.status(429).json({ error: 'Wait a few seconds' });
     const address = String(req.body?.address ?? '');
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return res.status(400).json({ error: 'Invalid Solana address' });
     try {
       const id = createPayout(uid, address, Number(req.body?.amount));
-      // The USDC transfer is executed by the payout worker (phase 2: solana.ts). Until then it stays pending.
-      res.json({ id, status: 'pending' });
+      if (!solanaEnabled()) return res.json({ id, status: 'pending', message: 'Queued — USDC payouts are processed by an operator on this server' });
+      const r = await finishPayoutOnchain(id, address);
+      res.json({ id, ...r });
     } catch (e) {
       res.status(409).json({ error: (e as Error).message });
     }
+  });
+
+  // ------------------------------------------------------------------ USDC deposits + plan checkout
+  app.get('/api/deposit', session, signedIn, (req: AuthedReq, res) => {
+    if (!solanaEnabled()) return res.json({ enabled: false });
+    const uid = req.principal!.user.id;
+    res.json({
+      enabled: true, address: getOrCreateDepositWallet(uid), mint: solanaConfig.usdcMint, cluster: solanaConfig.cluster,
+      creditsPerUsd: CREDITS_PER_USD_PURCHASED, intent: openIntent(uid) ?? null,
+    });
+  });
+
+  const depositLimit = limiter(1, 10_000);
+  app.post('/api/deposit/check', session, signedIn, async (req: AuthedReq, res) => {
+    const uid = req.principal!.user.id;
+    if (!depositLimit(uid)) return res.status(429).json({ error: 'Checked a moment ago — try again in 10 seconds' });
+    try {
+      const r = await checkDeposit(uid);
+      res.json({ ...r, balance: getBalance(uid), sweptUrl: r.swept ? explorerTx(r.swept) : undefined });
+    } catch (e) {
+      res.status(503).json({ error: (e as Error).message });
+    }
+  });
+
+  app.get('/api/plans', session, signedIn, (req: AuthedReq, res) => {
+    const u = req.principal!.user;
+    res.json({ plan: { id: activePlan(u), expiresAt: u.plan_expires }, intent: solanaEnabled() ? openIntent(u.id) ?? null : null, grant: grantState(u) });
+  });
+  const planLimit = limiter(1, 3_000);
+  app.post('/api/plans/buy', session, signedIn, (req: AuthedReq, res) => {
+    const uid = req.principal!.user.id;
+    if (!solanaEnabled()) return res.status(503).json({ error: 'USDC checkout is not configured on this server' });
+    if (!planLimit(uid)) return res.status(429).json({ error: 'Slow down' });
+    try {
+      const r = createIntent(uid, String(req.body?.plan) as PlanId, Number(req.body?.months) || 1);
+      res.json({ ...r, depositWallet: getOrCreateDepositWallet(uid) });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  });
+  app.post('/api/plans/cancel', session, signedIn, (req: AuthedReq, res) => {
+    res.json({ releasedCredits: releaseIntent(req.principal!.user.id, 'cancelled') });
   });
 
   app.get('/api/referrals', session, signedIn, (req: AuthedReq, res) => {
