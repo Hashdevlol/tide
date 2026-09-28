@@ -55,6 +55,12 @@ npx tsx node/src/index.ts --token tnt_… --backend openai --upstream http://127
 
 Or open **Earn → In this browser** to serve `tide-lite` from a WebGPU tab.
 
+Swarm nodes (experimental) split one big model across several GPUs with Current and serve `tide-swarm`:
+
+```bash
+npx tsx node/src/index.ts --mode current --token tnt_… --current-dir ./current --model-dir /models/m25   --sidecar ./current/sidecar/sidecar          # add --dry-run to see the exact engine commands
+```
+
 Image nodes serve the `/create` studio and `/v1/images/generations`:
 
 ```bash
@@ -125,7 +131,8 @@ cd current && python -m pytest tests/test_plan.py tests/test_verify*.py   # Curr
 | ✅ | orchestrator, billing lanes, OpenAI API, node agent (Ollama / OpenAI-compat / mock), anti-cheat, web app |
 | ✅ | USDC deposits + plan checkout + payouts (code complete; devnet run needs a funded treasury) |
 | ✅ | $TIDE custodial staking, rewards, keeper (dormant until `TIDE_TOKEN_MINT` is set) |
-| ⏳ | Current swarm integration (node announce → placement → ring → receipts), needs NVIDIA GPUs to validate |
+| ✅ | Current swarm control plane: key-proven announce, RTT mesh, `shard.plan` placement, ring assign/ready, head-routed jobs, `shard.verify` receipt settlement, pay-by-layers, dissolve/re-form (tested with fake rings + the real Python planner/verifier) |
+| ⏳ | `tide-node --mode current` engine launch (sidecar + `shard.stage` + `shard.coordinate`) — dry-run verified; needs Linux + NVIDIA GPUs + model weights |
 | ✅ | chat web search (`web_search` tool: Brave with `BRAVE_API_KEY`, otherwise keyless DuckDuckGo) |
 | ✅ | image generation: `/create` studio, `/v1/images/generations`, image nodes via ComfyUI (`--mode image`), 10 credits/image |
 | ✅ | operator console at `/admin` (set `ADMIN_SECRET`) |

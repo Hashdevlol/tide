@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type { JobNewMsg, RegisterAck, RegisterPayload } from '@tide/shared';
 import { MockBackend, OllamaBackend, OpenAICompatBackend, type Backend } from './backends.ts';
 import { runImageNode } from './image.ts';
+import { runCurrentNode } from './current.ts';
 
 const VERSION = '0.1.0';
 const CONFIG_PATH = join(homedir(), '.tide-node.json');
@@ -54,7 +55,15 @@ if (args.help || !args.token) {
   --comfy <url>           ComfyUI URL (default http://127.0.0.1:8188)
   --comfy-ckpt <file>     checkpoint for the built-in SDXL-style workflow
   --comfy-workflow <json> custom ComfyUI API-format workflow with {{prompt}} {{negative}} {{width}} {{height}} {{steps}} {{cfg}} {{seed}}
-  --backend mock          procedural test images (no GPU)`);
+  --backend mock          procedural test images (no GPU)
+
+  swarm mode (Current — one big model split across GPUs, experimental):
+  --mode current          join a swarm for tide-swarm
+  --current-dir <dir>     Current checkout (tide/current)
+  --model-dir <dir>       model weights directory
+  --sidecar <bin>         built Current sidecar binary (libp2p tunnels)
+  --public-ip / --vram-mb / --subnet / --up-mbps   override auto-detection
+  --dry-run               print the launch commands instead of starting the engine`);
   process.exit(args.token ? 0 : 1);
 }
 
@@ -153,4 +162,4 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-(args.mode === 'image' ? runImageNode(args, log, warn) : main()).catch((e) => { warn((e as Error).message); process.exit(1); });
+(args.mode === 'image' ? runImageNode(args, log, warn) : args.mode === 'current' ? runCurrentNode(args, log, warn) : main()).catch((e) => { warn((e as Error).message); process.exit(1); });
