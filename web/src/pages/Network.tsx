@@ -18,10 +18,62 @@ export interface Treasury {
   stakerRewardsPaidUsd?: number;
 }
 
+interface SwarmView {
+  candidates: { nodeId: string; model: string; gpu?: string; vramGb: number; ring: string | null }[];
+  rings: { swarmId: string; model: string; status: string; busy: boolean; tokS?: number; stages: { nodeId: string; lo: number; hi: number; head: boolean }[] }[];
+}
+
+function Swarms({ v }: { v: SwarmView | null }) {
+  const pool = v?.candidates.filter((c) => !c.ring).length ?? 0;
+  return (
+    <div className="card" style={{ marginTop: 18 }} id="swarms">
+      <div className="row-between">
+        <div>
+          <h3>Swarms</h3>
+          <p className="small muted">Current splits one large model across several GPUs — each ring below holds a full copy, layer by layer.</p>
+        </div>
+        <span className="mono tiny muted">{v ? `${v.rings.length} ring${v.rings.length === 1 ? '' : 's'} · ${pool} in pool` : '…'}</span>
+      </div>
+      {!v || v.rings.length === 0 ? (
+        <div className="empty small muted">No swarm is running yet. It takes several GPUs with enough combined VRAM — <Link className="link" to="/docs#nodes">join the pool →</Link></div>
+      ) : v.rings.map((r) => {
+        const total = Math.max(...r.stages.map((s) => s.hi));
+        return (
+          <div key={r.swarmId} style={{ marginTop: 14 }}>
+            <div className="row-between small" style={{ marginBottom: 6 }}>
+              <span><span className="mono">{r.swarmId}</span> · {r.model}</span>
+              <span className="row" style={{ gap: 6 }}>
+                <span className={`badge ${r.status === 'ready' ? 'foam' : 'warn'}`}>{r.busy ? 'serving' : r.status}</span>
+                {r.tokS ? <span className="mono tiny dim">~{r.tokS} tok/s</span> : null}
+              </span>
+            </div>
+            <div className="ring-bar">
+              {r.stages.map((s) => (
+                <div key={s.nodeId} className={`ring-seg${s.head ? ' head' : ''}`} style={{ flex: s.hi - s.lo }} title={`${s.nodeId}: layers ${s.lo}–${s.hi - 1}`}>
+                  <span className="mono tiny">{s.lo}–{s.hi - 1}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mono tiny dim" style={{ marginTop: 4 }}>{r.stages.length} stages · {total} layers · head runs the coordinator</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Network() {
   const stats = useNetworkStats();
   const connected = useSocketConnected();
   const [treasury, setTreasury] = useState<Treasury | null>(null);
+  const [swarm, setSwarm] = useState<SwarmView | null>(null);
+
+  useEffect(() => {
+    const load = () => api<SwarmView>('/api/swarm', { token: null }).then(setSwarm).catch(() => {});
+    load();
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     const load = () => api<Treasury>('/api/treasury', { token: null }).then(setTreasury).catch(() => {});
@@ -65,6 +117,8 @@ export default function Network() {
           <div className="tile"><div className="v">{stats ? stats.avgTokPerSec.toFixed(1) : '—'}</div><div className="l">Avg tok/s</div><div className="s">per node, measured</div></div>
           <div className="tile"><div className="v">0</div><div className="l">Prompts stored</div><div className="s">never persisted</div></div>
         </div>
+
+        <Swarms v={swarm} />
 
         <div className="grid grid-2" style={{ marginTop: 18 }}>
           <div className="card">

@@ -598,3 +598,9 @@ h1 em, h2 em { font-style: normal; background: linear-gradient(90deg, var(--foam
   .create-controls { position: static; }
   .thumb-x { opacity: 1; }
 }
+
+/* swarm ring visual */
+.ring-bar { display: flex; gap: 3px; height: 34px; }
+.ring-seg { display: flex; align-items: center; justify-content: center; min-width: 38px; border-radius: 8px; border: 1px solid rgba(127, 216, 255, .3);
+  background: linear-gradient(180deg, rgba(127, 216, 255, .16), rgba(127, 216, 255, .05)); color: var(--sky); }
+.ring-seg.head { border-color: rgba(61, 255, 194, .45); background: linear-gradient(180deg, rgba(61, 255, 194, .2), rgba(61, 255, 194, .06)); color: var(--foam); }
