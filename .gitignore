@@ -6,3 +6,6 @@ data/
 .env
 .env.local
 .tide-node.json
+.venv/
+__pycache__/
+.pytest_cache/
