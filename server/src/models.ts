@@ -1,5 +1,6 @@
 import type { NodeType } from '@tide/shared';
 import { config } from './config.ts';
+import type { SwarmModel } from './swarm.ts';
 
 export interface ModelEntry {
   id: string;                 // public model id
@@ -12,6 +13,8 @@ export interface ModelEntry {
   outputCap: number;          // max output tokens, also the credit hold basis
   outputCapThink: number;
   devOnly?: boolean;
+  /** Served by a Current swarm (one model split across several nodes) instead of single nodes. */
+  swarm?: SwarmModel;
 }
 
 // Browser nodes run these WebLLM prebuilt models (see web/src/earn/engine.ts).
@@ -37,6 +40,21 @@ export const CATALOG: ModelEntry[] = [
     inputBudget: 1_800,
     outputCap: 2048,
     outputCapThink: 2048,
+  },
+  {
+    id: 'tide-swarm',
+    name: 'Tide Swarm',
+    description: 'A frontier-size open model split layer-by-layer across community GPUs by Current. Every answer is backed by signed receipts.',
+    nodeType: 'native',
+    nodeModels: [],
+    inputBudget: 12_000,
+    outputCap: 512,
+    outputCapThink: 512,
+    swarm: {
+      profile: process.env.TIDE_SWARM_PROFILE ? JSON.parse(process.env.TIDE_SWARM_PROFILE) : 'nvidia/MiniMax-M2.5-NVFP4',
+      layerCount: Number(process.env.TIDE_SWARM_LAYERS) || 62,
+      manifestRef: process.env.TIDE_SWARM_MANIFEST ?? 'mf1:m25-nvfp4-v1',
+    },
   },
   {
     id: 'tide-dev',

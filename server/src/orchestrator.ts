@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { Server, Socket } from 'socket.io';
 import {
   estimateTokens, textCreditCost,
@@ -14,6 +14,8 @@ import { recordEarning, refund, reserve, settle, type Hold } from './billing.ts'
 import { knownNodeModel, nodeServes, resolveModel, type ModelEntry } from './models.ts';
 import { BLOCKED_MESSAGE, scanImagePrompt, scanText } from './safety.ts';
 import { WEB_SEARCH_TOOL, formatForModel, searchProvider } from './search.ts';
+import { SwarmManager, type AnnouncePayload, type Ring } from './swarm.ts';
+import { publicCatalog } from './models.ts';
 import {
   SPEED_CAP, SPEED_MIN_TOKENS, coherent, stripThink, gradeCanary, isBanned, makeCanary, recordCanary, strike, type Canary,
 } from './anticheat.ts';
@@ -88,6 +90,8 @@ interface Job {
   rounds: number;
   roundStart: number;            // index into text where the current round began
   toolBusy?: boolean;
+  swarmId?: string;              // served by a Current ring instead of a single node
+  nonce?: string;                // bound into the ring's signed receipts
   temperature?: number;
   hold?: Hold;
   inputTokens: number;
@@ -131,6 +135,7 @@ export class Orchestrator {
   jobs = new Map<string, Job>();
   queue: string[] = [];
   imageJobs = new Map<string, ImageJob>();
+  swarm: SwarmManager;
   imageQueue: string[] = [];
   private submitTimes = new Map<string, number[]>();
   private completedDurations: number[] = [];
@@ -148,10 +153,16 @@ export class Orchestrator {
       socket.data.ip = clientIp(socket);
       next();
     });
+    this.swarm = new SwarmManager(publicCatalog, {
+      onRingReady: () => this.processQueue(),
+      onRingDown: (ring, why) => this.onRingDown(ring, why),
+      changed: () => this.broadcastStats(),
+    });
     io.on('connection', (s) => this.onConnection(s));
 
     this.timers.push(setInterval(() => this.sweep(), 10_000));
     this.timers.push(setInterval(() => this.canarySweep(), 120_000));
+    this.timers.push(setInterval(() => this.swarm.sweep(), 60_000));
     this.timers.push(setInterval(() => this.io.emit('stats:update', this.stats()), 5_000));
   }
 
@@ -174,6 +185,22 @@ export class Orchestrator {
     s.on('job:complete', (m: JobCompleteMsg) => this.onNodeComplete(s, m));
     s.on('job:error', (m: JobErrorMsg) => this.onNodeError(s, m));
     s.on('image:result', (m: ImageResultMsg) => this.onImageResult(s, m));
+
+    // ---- swarm (Current) nodes ----
+    s.on('node:announce', (m: AnnouncePayload, ack?: (r: unknown) => void) => {
+      const pr = s.data.principal as Principal | null;
+      if (!pr || pr.kind !== 'node') return ack?.({ ok: false, reason: 'Swarm nodes must authenticate with a node token (tnt_…)' });
+      if (isBanned(pr.user.id)) return ack?.({ ok: false, reason: 'This account is banned from serving' });
+      ack?.(this.swarm.announce(s, pr.user.id, m));
+    });
+    s.on('node:rtt', (m: { rttMs: Record<string, number> }) => this.swarm.recordRtt(s.data.swarmNodeId, m?.rttMs));
+    s.on('swarm:ready', (m: { swarmId: string }) => this.swarm.markReady(s.data.swarmNodeId, String(m?.swarmId)));
+    s.on('swarm:job_token', (m: { jobId: string; delta: string }) => this.onSwarmToken(s, m));
+    s.on('swarm:job_complete', (m: { jobId: string; response?: string; tokensGenerated?: number; receipts?: unknown[] }) => void this.onSwarmComplete(s, m));
+    s.on('swarm:job_error', (m: { jobId: string; error: string }) => {
+      const job = this.swarmJobFor(s, m?.jobId);
+      if (job) this.failJob(job, `Swarm error: ${String(m.error ?? 'unknown').slice(0, 200)}`, 'NODE_ERROR');
+    });
     s.on('image:failed', (m: ImageFailedMsg) => this.onImageFailed(s, m));
 
     // ---- client side ----
@@ -205,6 +232,7 @@ export class Orchestrator {
 
     s.on('disconnect', () => {
       if (s.data.nodeId) this.dropNode(s.data.nodeId, 'disconnected');
+      if (s.data.swarmNodeId) this.swarm.drop(s.data.swarmNodeId, 'disconnected');
       for (const jobId of (s.data.jobs as Set<string> | undefined) ?? []) this.abort(jobId, true);
     });
   }
@@ -332,7 +360,9 @@ export class Orchestrator {
     if (!lastUser && !trimmed.some((m) => m.role === 'tool')) return { error: 'No user message', code: 'BAD_REQUEST' };
 
     const servingNodes = [...this.nodes.values()].filter((n) => nodeServes(entry, n.model, n.type));
-    if (servingNodes.length === 0) return { error: `No nodes are serving ${entry.name} right now`, code: 'NO_CAPACITY' };
+    if (entry.swarm ? !this.swarm.hasReadyRing(entry.id) : servingNodes.length === 0) {
+      return { error: `No ${entry.swarm ? 'swarm is' : 'nodes are'} serving ${entry.name} right now`, code: 'NO_CAPACITY' };
+    }
 
     const inputTokens = trimmed.reduce((a, m) => a + estimateTokens(m.content) + 4, 0);
     let outputCap = think ? entry.outputCapThink : entry.outputCap;
@@ -342,7 +372,7 @@ export class Orchestrator {
     const r = reserve(user, holdCredits, {
       viaApiKey: principal.kind === 'apikey',
       ipHash: hashIp(req.ip),
-      hasFreeCapacity: servingNodes.some((n) => n.accountAgeOk),
+      hasFreeCapacity: entry.swarm ? true : servingNodes.some((n) => n.accountAgeOk),
     });
     if ('error' in r) return r;
 
@@ -386,6 +416,13 @@ export class Orchestrator {
     for (let i = 0; i < this.queue.length; i++) {
       const job = this.jobs.get(this.queue[i]);
       if (!job || job.status !== 'queued') { this.queue.splice(i--, 1); continue; }
+      if (job.entry.swarm) {
+        const ring = this.swarm.idleRing(job.entry.id);
+        if (!ring) continue;
+        this.queue.splice(i--, 1);
+        this.dispatchSwarm(job, ring);
+        continue;
+      }
       const freeLane = job.hold?.lane === 'free' || job.hold?.subsidyKind === 'free_grant';
       const idle = [...this.nodes.values()].filter(
         (n) => n.status === 'idle' && nodeServes(job.entry, n.model, n.type) && (!freeLane || n.accountAgeOk),
@@ -605,11 +642,19 @@ export class Orchestrator {
       }
     }
     if (node && job.status === 'running') node.socket.emit('job:cancel', { jobId: job.id });
+    if (job.swarmId && job.status === 'running') {
+      const ring = this.swarm.rings.get(job.swarmId);
+      if (ring) this.swarm.headOf(ring)?.socket.emit('swarm:job_cancel', { jobId: job.id, swarmId: ring.id });
+    }
     job.sink?.onError(error, code);
     this.finishJob(job);
   }
 
   private finishJob(job: Job) {
+    if (job.swarmId) {
+      const ring = this.swarm.rings.get(job.swarmId);
+      if (ring && ring.jobId === job.id) ring.jobId = undefined;
+    }
     job.status = 'done';
     job.sink = undefined;
     job.text = '';
@@ -634,6 +679,102 @@ export class Orchestrator {
     ).run(job.id, job.user.id, node?.id ?? null, node?.ownerId ?? null, job.entry.id, job.hold?.lane ?? 'free', job.source, status,
       job.inputTokens, outTokens, credits, job.dispatchedAt ? now() - job.dispatchedAt : null, job.createdAt);
   }
+
+  // ------------------------------------------------------------------ swarm jobs (Current rings)
+  private dispatchSwarm(job: Job, ring: Ring) {
+    const head = this.swarm.headOf(ring);
+    if (!head) return;
+    job.status = 'running';
+    job.swarmId = ring.id;
+    job.nonce = randomBytes(16).toString('hex');
+    job.dispatchedAt = now();
+    job.lastTokenAt = now();
+    ring.jobId = job.id;
+    job.sink?.onAssigned?.(ring.id);
+    const messages = job.messages.some((m) => m.role === 'system') ? job.messages : [{ role: 'system' as const, content: NATIVE_SYSTEM() }, ...job.messages];
+    head.socket.emit('swarm:job', {
+      swarmId: ring.id, jobId: job.id, messages, nonce: job.nonce, maxNew: Math.max(1, job.outputCap - job.tokens), reasoning: job.think,
+    });
+  }
+
+  private swarmJobFor(s: Socket, jobId: string): Job | null {
+    const job = this.jobs.get(jobId);
+    if (!job || !job.swarmId || job.status !== 'running') return null;
+    const ring = this.swarm.rings.get(job.swarmId);
+    // Only the ring's coordinator (head) may stream or settle a job.
+    if (!ring || this.swarm.headOf(ring)?.socket.id !== s.id) return null;
+    return job;
+  }
+
+  private onSwarmToken(s: Socket, m: { jobId: string; delta: string }) {
+    const job = this.swarmJobFor(s, m?.jobId);
+    if (!job || typeof m.delta !== 'string') return;
+    if (job.tokens >= job.outputCap + 32) return; // past the cap: stop relaying (and billing)
+    job.tokens++;
+    job.text += m.delta;
+    job.lastTokenAt = now();
+    if (job.tokens % 16 === 0 && !scanText(job.text.slice(-600)).safe) {
+      job.sink?.onToken('\n\n' + BLOCKED_MESSAGE);
+      this.failJob(job, 'Blocked by safety filter', 'SAFETY');
+      return;
+    }
+    job.sink?.onToken(m.delta);
+  }
+
+  private async onSwarmComplete(s: Socket, m: { jobId: string; response?: string; tokensGenerated?: number; receipts?: unknown[] }) {
+    const job = this.swarmJobFor(s, m?.jobId);
+    if (!job) return;
+    const ring = this.swarm.rings.get(job.swarmId!)!;
+    const text = job.text || (typeof m.response === 'string' ? m.response : '');
+    if (!scanText(text).safe) {
+      job.sink?.onToken('\n\n' + BLOCKED_MESSAGE);
+      this.failJob(job, 'Blocked by safety filter', 'SAFETY');
+      return;
+    }
+    const counted = Math.min(job.tokens, job.outputCap);
+    const truncated = job.tokens >= job.outputCap;
+    const hold = job.hold!;
+    const charged = counted > 0 ? settle(hold, textCreditCost(job.inputTokens, counted), job.id) : (refund(hold, job.id), 0);
+    const nonce = job.nonce!;
+    const payerId = job.user!.id;
+    const ok = coherent(text);
+
+    this.totals.jobsCompleted++;
+    this.totals.tokensGenerated += counted;
+    job.sink?.onComplete({
+      response: text, usage: { inputTokens: job.inputTokens, outputTokens: counted, credits: charged }, truncated,
+      finishReason: truncated ? 'length' : 'stop',
+    });
+    this.persistJob(job, undefined, 'completed', counted, charged);
+    this.finishJob(job);
+
+    // Settlement: only a receipt set that proves the whole model ran on this ring pays anyone.
+    if (!charged || !ok) return;
+    const layerCount = job.entry.swarm!.layerCount;
+    const v = await this.swarm.verifyReceipts(ring, job.id, nonce, Array.isArray(m.receipts) ? m.receipts : [], layerCount);
+    if (!v.ok) {
+      const head = ring.stages.find((x) => x.head)!;
+      if (strike(head.ownerId, 'invalid swarm receipts')) this.swarm.dissolve(ring.id, 'coordinator banned');
+      return;
+    }
+    for (const { stage, weight } of v.shares) {
+      recordEarning({ jobId: `${job.id}#${stage.index}`, ownerId: stage.ownerId, payerId, hold, charged: charged * weight, tokens: Math.round(counted * weight) });
+    }
+  }
+
+  private onRingDown(ring: Ring, _why: string) {
+    const job = ring.jobId ? this.jobs.get(ring.jobId) : undefined;
+    if (!job || job.status !== 'running') return;
+    if (job.tokens === 0) {
+      job.status = 'queued'; job.swarmId = undefined; job.dispatchedAt = undefined;
+      this.queue.unshift(job.id);
+      this.processQueue();
+    } else {
+      this.failJob(job, 'The swarm serving this answer lost a node', 'NODE_GONE');
+    }
+  }
+
+  swarmView() { return this.swarm.publicView(); }
 
   // ------------------------------------------------------------------ image lane
   submitImage(req: { principal: Principal; ip: string; params: ImageParams; nsfw: boolean; sink: ImageSink }): { jobId: string } | { error: string; code: ErrorCode } {
@@ -827,6 +968,7 @@ export class Orchestrator {
 
   modelAvailability(id: string): number {
     const r = resolveModel(id);
+    if (r?.entry.swarm) return [...this.swarm.rings.values()].filter((x) => x.model === r.entry.id && x.status === 'ready').length;
     return r ? [...this.nodes.values()].filter((n) => nodeServes(r.entry, n.model, n.type)).length : 0;
   }
 

@@ -57,6 +57,7 @@ export function createApi(orch: Orchestrator) {
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/api/stats', (_req, res) => res.json(orch.stats()));
+  app.get('/api/swarm', (_req, res) => res.json(orch.swarmView()));
 
   // ------------------------------------------------------------------ auth
   const anonLimit = limiter(20, 3600_000);
