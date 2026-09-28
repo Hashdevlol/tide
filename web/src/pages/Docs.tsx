@@ -7,6 +7,7 @@ const TOC = [
   ['overview', 'Overview'],
   ['auth', 'Authentication'],
   ['models', 'Models'],
+  ['images', 'Images'],
   ['chat', 'Chat completions'],
   ['streaming', 'Streaming'],
   ['tools', 'Tools & thinking'],
@@ -171,6 +172,22 @@ npx tsx node/src/index.ts --token tnt_... --url ${origin} --backend mock`;
               </div>
               <p>Append <code>-think</code> to any id (e.g. <code>tide-max-think</code>) — or pass <code>"think": true</code> — to let the model reason first. Reasoning arrives inline inside <code>&lt;think&gt;…&lt;/think&gt;</code>.</p>
               <CodeBlock code={models} />
+            </section>
+
+            <section id="images">
+              <h2>Images</h2>
+              <div className="endpoint"><span className="m">POST</span>/v1/images/generations</div>
+              <p>Renders one image on a community image node (ComfyUI). Flat <b>10 credits</b> per image, refunded if the node fails. The request stays open until the image is ready (usually 5–60s).</p>
+              <ul>
+                <li><code>prompt</code> (required), <code>negative_prompt</code>, <code>size</code> — <code>"WxH"</code>, 512–1536, snapped to multiples of 64 (default <code>1024x1024</code>).</li>
+                <li><code>seed</code>, <code>steps</code> (10–60), <code>cfg</code> (1–15), <code>nsfw</code> (default <code>false</code>: sexual prompts are refused). Only <code>n: 1</code> and <code>response_format: "b64_json"</code>.</li>
+              </ul>
+              <CodeBlock code={`curl ${base}/images/generations \
+  -H "Authorization: Bearer sk-tide-..." -H "Content-Type: application/json" \
+  -d '{"prompt": "a lighthouse at night, crashing waves", "size": "1216x832"}'
+
+# → {"created": 1790600000, "data": [{"b64_json": "iVBORw0KGgo..."}],
+#    "model": "tide-image", "seed": 2783662996, "size": "1216x832", "credits_charged": 10}`} />
             </section>
 
             <section id="chat">

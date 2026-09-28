@@ -181,6 +181,7 @@ interface NodeToken { id: string; name: string | null; prefix: string; created_a
 const BACKENDS = [
   { id: 'ollama', label: 'Ollama', args: '--base-model qwen3:8b', note: 'Default. Install Ollama and pull the model first: ollama pull qwen3:8b' },
   { id: 'openai', label: 'llama.cpp / LM Studio / vLLM', args: '--backend openai --upstream http://127.0.0.1:8080/v1 --upstream-model <id>', note: 'Any OpenAI-compatible server. Replace <id> with the model id your server exposes.' },
+  { id: 'image', label: 'Images (ComfyUI)', args: '--mode image --comfy http://127.0.0.1:8188 --comfy-ckpt <checkpoint.safetensors>', note: 'Serve the image studio from ComfyUI. Paid per image (70% of 10 credits). Use --comfy-workflow <api.json> for Flux or any custom graph.' },
   { id: 'mock', label: 'Mock (testing)', args: '--backend mock', note: 'Serves the tide-dev mock model — for testing the network without a GPU.' },
 ];
 
