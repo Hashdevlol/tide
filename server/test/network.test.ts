@@ -228,3 +228,42 @@ test('abort mid-stream bills only what was delivered', async () => {
   assert.equal((await get('/api/credits', token)).balance, 99);
   slow.s.close();
 });
+
+test('chat web_search: node calls the tool, orchestrator searches, answer continues with sources', async () => {
+  const { searchProvider } = await import('../src/search.ts');
+  searchProvider.run = async (q: string) => [{ title: 'Tide tables', url: 'https://example.com/tides', description: `results for ${q}`, content: 'High tide at 14:05.' }];
+  const seen: JobNewMsg[] = [];
+  const { token } = await post('/api/auth/dev', { name: 'owner-tools' });
+  const { token: nt } = await post('/api/node-tokens', {}, token);
+  const s = await connect(nt);
+  await s.emitWithAck('node:register', { model: 'tide-dev', tokPerSec: 30, type: 'native', capabilities: { tools: true } });
+  s.on('job:new', async (job: JobNewMsg) => {
+    seen.push(job);
+    if (seen.length === 1) {
+      assert.equal((job.tools as any[])?.[0]?.function?.name, 'web_search');
+      s.emit('job:token', { jobId: job.jobId, token: 'Let me check. ' });
+      s.emit('job:complete', { jobId: job.jobId, response: 'Let me check. ', tokensGenerated: 3, doneReason: 'tool_calls',
+        toolCalls: [{ id: 'c1', type: 'function', function: { name: 'web_search', arguments: '{"query":"high tide today"}' } }] });
+    } else {
+      const tool = job.messages.find((m) => m.role === 'tool');
+      assert.match(tool!.content, /High tide at 14:05/);
+      const words = 'According to example.com high tide today is at 14:05 in the afternoon local time.'.split(/(?<=\s)/);
+      for (const w of words) { await sleep(5); s.emit('job:token', { jobId: job.jobId, token: w }); }
+      s.emit('job:complete', { jobId: job.jobId, response: words.join(''), tokensGenerated: words.length });
+    }
+  });
+  const anon = await post('/api/auth/anon', {});
+  const c = await connect(anon.token);
+  const sources: any[] = [];
+  let searched = '';
+  c.on('job:searching', (m) => { searched = m.query; });
+  c.on('job:sources', (m) => sources.push(...m.sources));
+  const r = await chat(c, 'When is high tide today?');
+  assert.ok(r.done, JSON.stringify(r.error));
+  assert.equal(seen.length, 2);
+  assert.equal(searched, 'high tide today');
+  assert.equal(sources[0].url, 'https://example.com/tides');
+  assert.match(r.tokens.join(''), /Let me check\. According to example\.com/);
+  assert.ok(r.done.usage.outputTokens >= 10);
+  s.close();
+});

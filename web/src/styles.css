@@ -560,3 +560,10 @@ h1 em, h2 em { font-style: normal; background: linear-gradient(90deg, var(--foam
   *, *::before, *::after { animation-duration: .001s !important; transition-duration: .001s !important; }
   html { scroll-behavior: auto; }
 }
+
+/* web search sources */
+.sources { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 4px; }
+.sources-label { font-size: 10.5px; letter-spacing: .16em; color: var(--mist); margin-right: 4px; }
+.source-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 12.5px; color: var(--pearl); background: rgba(17, 34, 74, .45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: .15s; }
+.source-chip:hover { border-color: var(--foam); color: var(--foam); }

@@ -127,7 +127,15 @@ export default function Chat() {
     const mine = (jobId: string) => jobRef.current?.jobId === jobId ? jobRef.current : null;
     const onToken = ({ jobId, token }: { jobId: string; token: string }) => {
       const j = mine(jobId);
-      if (j) patchMsg(j.convId, j.msgId, (m) => ({ ...m, status: 'streaming', queuePos: undefined, content: m.content + token }));
+      if (j) patchMsg(j.convId, j.msgId, (m) => ({ ...m, status: 'streaming', queuePos: undefined, content: m.content + token, searching: undefined }));
+    };
+    const onSearching = ({ jobId, query }: { jobId: string; query: string }) => {
+      const j = mine(jobId);
+      if (j) patchMsg(j.convId, j.msgId, (m) => ({ ...m, searching: query || 'the web' }));
+    };
+    const onSources = ({ jobId, sources }: { jobId: string; sources: ChatMsg['sources'] }) => {
+      const j = mine(jobId);
+      if (j && sources?.length) patchMsg(j.convId, j.msgId, (m) => ({ ...m, sources: [...(m.sources ?? []), ...sources].filter((x, i, a) => a.findIndex((y) => y.url === x.url) === i).slice(0, 12) }));
     };
     const onQueue = ({ jobId, position }: { jobId: string; position: number }) => {
       const j = mine(jobId);
@@ -157,6 +165,8 @@ export default function Chat() {
       else finish('error', { error, errorCode: code });
     };
     s.on('job:token', onToken);
+    s.on('job:searching', onSearching);
+    s.on('job:sources', onSources);
     s.on('queue:position', onQueue);
     s.on('job:assigned', onAssigned);
     s.on('job:complete', onComplete);
@@ -168,6 +178,8 @@ export default function Chat() {
     s.on('disconnect', onDisconnect);
     return () => {
       s.off('job:token', onToken);
+      s.off('job:searching', onSearching);
+      s.off('job:sources', onSources);
       s.off('queue:position', onQueue);
       s.off('job:assigned', onAssigned);
       s.off('job:complete', onComplete);
@@ -510,7 +522,20 @@ function AssistantMessage({ m, modelName, isLast, busy, onRegenerate, onContinue
             : <><span className="typing"><i /><i /><i /></span> {m.status === 'pending' ? 'Sending…' : 'Finding a node…'}</>}
         </div>
       )}
-      {live && m.content && <span className="cursor" />}
+      {live && m.searching && (
+        <div className="msg-status"><span className="spinner" style={{ width: 12, height: 12 }} /> Searching the web for “{m.searching}”…</div>
+      )}
+      {m.sources && m.sources.length > 0 && (
+        <div className="sources">
+          <span className="sources-label mono">SOURCES</span>
+          {m.sources.map((src, i) => (
+            <a key={src.url} className="source-chip" href={src.url} target="_blank" rel="noreferrer noopener" title={src.description || src.title}>
+              <span className="mono dim">{i + 1}</span> {hostOf(src.url)}
+            </a>
+          ))}
+        </div>
+      )}
+      {live && m.content && !m.searching && <span className="cursor" />}
 
       {m.status === 'error' && <ErrorNote m={m} onSignIn={onSignIn} />}
       {m.status === 'stopped' && <div className="tiny dim mono">Stopped</div>}
@@ -547,4 +572,8 @@ function ErrorNote({ m, onSignIn }: { m: ChatMsg; onSignIn(): void }) {
     default:
       return <div className="notice danger msg-error"><span>{m.error ?? 'Something went wrong.'}</span></div>;
   }
+}
+
+function hostOf(u: string) {
+  try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; }
 }

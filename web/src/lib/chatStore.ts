@@ -14,6 +14,9 @@ export interface ChatMsg {
   truncated?: boolean;
   error?: string;
   errorCode?: string;
+  /** Query currently being searched (cleared when tokens resume). */
+  searching?: string;
+  sources?: { title: string; url: string; description?: string }[];
 }
 
 export interface Conversation {

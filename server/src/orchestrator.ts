@@ -12,8 +12,9 @@ import { hashIp, resolveToken, type Principal, type User } from './auth.ts';
 import { recordEarning, refund, reserve, settle, type Hold } from './billing.ts';
 import { knownNodeModel, nodeServes, resolveModel, type ModelEntry } from './models.ts';
 import { BLOCKED_MESSAGE, scanText } from './safety.ts';
+import { WEB_SEARCH_TOOL, formatForModel, searchProvider } from './search.ts';
 import {
-  SPEED_CAP, SPEED_MIN_TOKENS, coherent, gradeCanary, isBanned, makeCanary, recordCanary, strike, type Canary,
+  SPEED_CAP, SPEED_MIN_TOKENS, coherent, stripThink, gradeCanary, isBanned, makeCanary, recordCanary, strike, type Canary,
 } from './anticheat.ts';
 
 // ---------------------------------------------------------------------------------------------
@@ -27,6 +28,7 @@ interface NodeRec {
   ip: string;
   model: string;
   type: NodeType;
+  tools: boolean;               // node can do tool calling (enables web search on chat jobs)
   benchTokPerSec: number;
   samples: number[];            // last 5 measured tok/s
   status: 'idle' | 'busy';
@@ -47,7 +49,11 @@ export interface JobSink {
   onToken(token: string): void;
   onComplete(r: { response: string; usage: Usage; truncated: boolean; finishReason: 'stop' | 'length' | 'tool_calls'; toolCalls?: ToolCall[] }): void;
   onError(error: string, code: ErrorCode): void;
+  /** Side-channel UI events (web search progress / sources). */
+  onEvent?(event: 'job:searching' | 'job:sources', data: object): void;
 }
+
+const MAX_TOOL_ROUNDS = 5;
 
 interface Job {
   id: string;
@@ -56,7 +62,11 @@ interface Job {
   entry: ModelEntry;
   messages: ChatMessage[];
   think: boolean;
-  tools?: unknown[];
+  tools?: unknown[];             // caller-supplied tools (API passthrough)
+  serverTools: boolean;          // orchestrator runs web_search itself (chat jobs)
+  rounds: number;
+  roundStart: number;            // index into text where the current round began
+  toolBusy?: boolean;
   temperature?: number;
   hold?: Hold;
   inputTokens: number;
@@ -86,9 +96,10 @@ export interface SubmitRequest {
   sink: JobSink;
 }
 
-const NATIVE_SYSTEM = () =>
+const NATIVE_SYSTEM = (search = false) =>
   `You are Tide, an open model served by a decentralized network of GPUs. Today is ${new Date().toISOString().slice(0, 10)}. ` +
-  `Answer directly and helpfully.`;
+  `Answer directly and helpfully.` +
+  (search ? ' You can call web_search for anything recent or time-sensitive (news, prices, current events) or facts you are unsure of; cite the URLs you use.' : '');
 
 // ---------------------------------------------------------------------------------------------
 // Orchestrator
@@ -150,6 +161,7 @@ export class Orchestrator {
         onToken: (token) => s.emit('job:token', { jobId, token }),
         onComplete: (r) => s.emit('job:complete', { jobId, ...r }),
         onError: (error, code) => s.emit('job:error', { jobId, error, code }),
+        onEvent: (event, data) => s.emit(event, { jobId, ...data }),
       };
       const r = this.submit({
         principal: p, ip: s.data.ip, messages: payload?.messages, model: payload?.model, think: payload?.think,
@@ -199,6 +211,7 @@ export class Orchestrator {
       ip: s.data.ip,
       model,
       type,
+      tools: type === 'native' && !!p?.capabilities?.tools,
       benchTokPerSec: tps,
       samples: [],
       status: 'idle',
@@ -308,6 +321,9 @@ export class Orchestrator {
       messages: trimmed,
       think,
       tools: req.tools,
+      serverTools: req.source === 'chat' && !req.tools,
+      rounds: 0,
+      roundStart: 0,
       temperature: req.temperature,
       hold: r.hold,
       inputTokens,
@@ -355,21 +371,53 @@ export class Orchestrator {
     node.status = 'busy';
     node.jobId = job.id;
     job.sink?.onAssigned?.(node.id);
+    node.socket.emit('job:new', this.jobMessage(job, node));
+    this.emitNodeStatus(node.ownerId);
+  }
 
+  private jobMessage(job: Job, node: NodeRec): JobNewMsg {
+    const tools = job.tools ?? (job.serverTools && node.tools && job.rounds < MAX_TOOL_ROUNDS ? [WEB_SEARCH_TOOL] : undefined);
     let messages = job.messages;
     if (node.type === 'native' && !messages.some((m) => m.role === 'system')) {
-      messages = [{ role: 'system', content: NATIVE_SYSTEM() }, ...messages];
+      messages = [{ role: 'system', content: NATIVE_SYSTEM(!!tools && !job.tools) }, ...messages];
     }
-    const msg: JobNewMsg = {
+    return {
       jobId: job.id,
       messages,
-      maxTokens: job.outputCap,
+      maxTokens: Math.max(64, job.outputCap - job.tokens),
       think: job.think,
-      tools: job.tools,
+      tools,
       temperature: job.temperature,
     };
-    node.socket.emit('job:new', msg);
-    this.emitNodeStatus(node.ownerId);
+  }
+
+  /** Run the model's web_search calls, then start the next generation round on the same node. */
+  private async runServerTools(job: Job, node: NodeRec, calls: ToolCall[]) {
+    job.rounds++;
+    job.toolBusy = true;
+    const said = stripThink(job.text.slice(job.roundStart));
+    const named = calls.map((c, i) => ({ ...c, id: c.id ?? `call_${job.rounds}_${i}`, type: 'function' as const }));
+    job.messages = [...job.messages, { role: 'assistant', content: said, tool_calls: named }];
+    for (const c of named) {
+      let content = `Unknown tool "${c.function.name}"`;
+      if (c.function.name === 'web_search') {
+        let args: { query?: string; freshness?: string } = {};
+        try { args = JSON.parse(c.function.arguments || '{}'); } catch { /* model sent bad JSON */ }
+        const query = String(args.query ?? '').slice(0, 300);
+        job.sink?.onEvent?.('job:searching', { query });
+        const results = query ? await searchProvider.run(query, args.freshness).catch((e) => { log(`search failed: ${(e as Error).message}`); return []; }) : [];
+        job.sink?.onEvent?.('job:sources', { query, sources: results.map(({ title, url, description }) => ({ title, url, description })) });
+        content = formatForModel(query, results);
+      }
+      job.messages.push({ role: 'tool', tool_call_id: c.id, name: c.function.name, content });
+      job.inputTokens += estimateTokens(content);
+    }
+    // The job may have been stopped or the node may have left while we searched.
+    if (job.status !== 'running' || node.jobId !== job.id || !this.nodes.has(node.id)) return;
+    job.toolBusy = false;
+    job.lastTokenAt = now();
+    job.roundStart = job.text.length;
+    node.socket.emit('job:new', this.jobMessage(job, node));
   }
 
   // ------------------------------------------------------------------ node events
@@ -436,6 +484,12 @@ export class Orchestrator {
     if (!scanText(text).safe) {
       job.sink?.onToken('\n\n' + BLOCKED_MESSAGE);
       this.failJob(job, 'Blocked by safety filter', 'SAFETY');
+      return;
+    }
+
+    // The model asked to search: run it and continue the answer in another round.
+    if (job.serverTools && Array.isArray(m.toolCalls) && m.toolCalls.length && job.rounds < MAX_TOOL_ROUNDS && job.tokens < job.outputCap) {
+      void this.runServerTools(job, node, m.toolCalls);
       return;
     }
 
@@ -556,7 +610,7 @@ export class Orchestrator {
     const c = makeCanary();
     const job: Job = {
       id: 'job_' + randomUUID().replace(/-/g, '').slice(0, 20),
-      source: 'canary', entry, messages: c.messages, think: false, inputTokens: 0, outputCap: 256,
+      source: 'canary', entry, messages: c.messages, think: false, inputTokens: 0, outputCap: 256, serverTools: false, rounds: 0, roundStart: 0,
       status: 'queued', createdAt: now(), tokens: 0, text: '', canary: c,
     };
     node.jobsSinceCanary = 0;
@@ -580,7 +634,7 @@ export class Orchestrator {
       } else if (job.status === 'running') {
         const since = t - (job.dispatchedAt ?? t);
         const ceiling = job.canary ? config.canaryCeiling : config.jobCeiling;
-        const stalled = job.tokens === 0 ? since > config.firstTokenTimeout : t - (job.lastTokenAt ?? t) > config.tokenGapTimeout;
+        const stalled = !job.toolBusy && (job.tokens === 0 ? since > config.firstTokenTimeout : t - (job.lastTokenAt ?? t) > config.tokenGapTimeout);
         if (stalled || since > ceiling) {
           if (job.canary) {
             const node = this.nodes.get(job.nodeId!);
