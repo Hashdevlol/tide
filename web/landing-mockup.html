@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tide — compute that flows where it's needed</title>
+<meta name="description" content="Tide is an open protocol for decentralized AI. A permissionless network of user-owned GPUs that funds inference and training of open models." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<link rel="icon" href="assets/tide-mark.svg" type="image/svg+xml" />
+<style>
+  :root{
+    --abyss:#050B18; --deep:#0A1630; --navy:#11224A; --line:#1C3263;
+    --foam:#3DFFC2; --foam-dim:#1FB88A; --sky:#7FD8FF; --pearl:#E9F4F7; --mist:#8BA3C4;
+    --r:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--abyss);color:var(--pearl);font-family:Sora,system-ui,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  a{color:inherit;text-decoration:none}
+  .mono{font-family:"JetBrains Mono",monospace}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+
+  /* nav */
+  nav{position:fixed;inset:0 0 auto 0;z-index:20;backdrop-filter:blur(14px);background:rgba(5,11,24,.6);border-bottom:1px solid rgba(28,50,99,.6)}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:68px}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;letter-spacing:-.02em}
+  .brand svg{width:30px;height:30px}
+  .links{display:flex;gap:30px;font-size:14px;color:var(--mist)}
+  .links a:hover{color:var(--pearl)}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:999px;font-weight:600;font-size:14px;transition:.2s}
+  .btn-foam{background:var(--foam);color:var(--abyss)}
+  .btn-foam:hover{box-shadow:0 0 0 6px rgba(61,255,194,.15);transform:translateY(-1px)}
+  .btn-ghost{border:1px solid var(--line);color:var(--pearl)}
+  .btn-ghost:hover{border-color:var(--foam);color:var(--foam)}
+
+  /* hero */
+  .hero{position:relative;min-height:100vh;display:flex;align-items:center;padding-top:68px;overflow:hidden}
+  #sea{position:absolute;inset:0;width:100%;height:100%}
+  .hero::after{content:"";position:absolute;inset:auto 0 0 0;height:220px;background:linear-gradient(transparent,var(--abyss));pointer-events:none}
+  .hero-inner{position:relative;z-index:2;max-width:760px}
+  .pill{display:inline-flex;align-items:center;gap:10px;padding:6px 14px 6px 8px;border:1px solid var(--line);border-radius:999px;font-size:12.5px;color:var(--mist);background:rgba(10,22,48,.6)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--foam);box-shadow:0 0 10px var(--foam);animation:pulse 2s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  h1{font-size:clamp(44px,7vw,84px);line-height:1.02;letter-spacing:-.045em;font-weight:700;margin:22px 0}
+  h1 em{font-style:normal;background:linear-gradient(90deg,var(--foam),var(--sky));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lead{font-size:19px;color:var(--mist);max-width:600px;font-weight:300}
+  .cta{display:flex;gap:12px;margin-top:34px;flex-wrap:wrap}
+  .stats{display:flex;gap:44px;margin-top:64px;flex-wrap:wrap}
+  .stat b{display:block;font-family:"JetBrains Mono",monospace;font-size:26px;font-weight:600;color:var(--pearl)}
+  .stat span{font-size:12px;color:var(--mist);text-transform:uppercase;letter-spacing:.12em}
+
+  section{padding:120px 0}
+  .eyebrow{font-family:"JetBrains Mono",monospace;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--foam)}
+  h2{font-size:clamp(34px,4.4vw,54px);letter-spacing:-.035em;line-height:1.08;margin:14px 0 18px;font-weight:700}
+  .sub{color:var(--mist);max-width:620px;font-size:17px}
+
+  /* doors */
+  .doors{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:56px}
+  .door{position:relative;padding:34px 30px 30px;border:1px solid var(--line);border-radius:var(--r);background:linear-gradient(180deg,rgba(17,34,74,.55),rgba(10,22,48,.2));overflow:hidden;transition:.25s}
+  .door:hover{border-color:var(--foam-dim);transform:translateY(-4px)}
+  .door::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--foam),var(--sky));opacity:0;transition:.25s}
+  .door:hover::before{opacity:1}
+  .door .tag{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.18em;color:var(--mist)}
+  .door h3{font-size:26px;letter-spacing:-.02em;margin:14px 0 10px}
+  .door p{color:var(--mist);font-size:15px;min-height:96px}
+  .door ul{list-style:none;margin:20px 0 26px;font-size:14px}
+  .door li{padding:8px 0;border-top:1px solid rgba(28,50,99,.7);display:flex;gap:10px}
+  .door li::before{content:"≈";color:var(--foam);font-family:"JetBrains Mono",monospace}
+  .door a.more{color:var(--foam);font-weight:600;font-size:14px}
+
+  /* code */
+  .split{display:grid;grid-template-columns:1fr 1.1fr;gap:56px;align-items:center}
+  pre{background:var(--deep);border:1px solid var(--line);border-radius:var(--r);padding:26px;font-family:"JetBrains Mono",monospace;font-size:13.5px;line-height:1.75;overflow:auto;color:#B9CBE4}
+  .k{color:var(--sky)} .s{color:var(--foam)} .c{color:#4F6A93}
+  .check{list-style:none;margin-top:28px}
+  .check li{padding:10px 0;display:flex;gap:12px;color:var(--mist)}
+  .check b{color:var(--pearl);font-weight:600}
+  .check li::before{content:"";flex:none;width:18px;height:18px;margin-top:3px;border-radius:50%;background:radial-gradient(circle,var(--foam) 35%,transparent 40%),rgba(61,255,194,.12)}
+
+  /* flow */
+  .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:56px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .step{padding:30px 26px;border-right:1px solid var(--line);background:rgba(10,22,48,.4)}
+  .step:last-child{border-right:0}
+  .step .n{font-family:"JetBrains Mono",monospace;color:var(--foam);font-size:13px}
+  .step h4{font-size:19px;margin:12px 0 8px;letter-spacing:-.01em}
+  .step p{font-size:14px;color:var(--mist)}
+
+  /* token */
+  .token{border:1px solid var(--line);border-radius:22px;padding:56px;background:radial-gradient(ellipse at top right,rgba(61,255,194,.12),transparent 60%),var(--deep);display:grid;grid-template-columns:1.1fr 1fr;gap:48px;align-items:center}
+  .split-bar{display:flex;height:64px;border-radius:12px;overflow:hidden;font-family:"JetBrains Mono",monospace;font-size:13px;font-weight:600}
+  .split-bar div{display:flex;align-items:center;justify-content:center}
+  .burn{flex:1;background:linear-gradient(90deg,#0E7A5C,var(--foam-dim));color:var(--pearl)}
+  .stake{flex:1;background:linear-gradient(90deg,var(--foam-dim),var(--foam));color:var(--abyss)}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:22px;font-size:14px;color:var(--mist)}
+  .legend b{display:block;color:var(--pearl);font-size:15px}
+
+  /* ticker */
+  .ticker{border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow:hidden;white-space:nowrap;padding:16px 0;font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--mist)}
+  .ticker div{display:inline-block;animation:scroll 50s linear infinite}
+  .ticker span{margin-right:48px} .ticker i{font-style:normal;color:var(--foam)}
+  @keyframes scroll{to{transform:translateX(-50%)}}
+
+  .final{text-align:center}
+  .final h2{max-width:780px;margin:14px auto 18px}
+  .final .cta{justify-content:center}
+
+  footer{border-top:1px solid var(--line);padding:64px 0 40px;font-size:14px;color:var(--mist)}
+  .fgrid{display:grid;grid-template-columns:1.6fr repeat(4,1fr);gap:32px}
+  footer h5{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.18em;color:var(--pearl);margin-bottom:14px;font-weight:600}
+  footer li{list-style:none;padding:4px 0} footer a:hover{color:var(--foam)}
+  .fine{display:flex;justify-content:space-between;margin-top:56px;padding-top:24px;border-top:1px solid var(--line);font-size:12.5px}
+
+  @media (max-width:900px){
+    .links{display:none}
+    .doors,.split,.token,.fgrid{grid-template-columns:1fr}
+    .flow{grid-template-columns:1fr 1fr}
+    .step:nth-child(2){border-right:0}
+    .step:nth-child(-n+2){border-bottom:1px solid var(--line)}
+    .token{padding:32px}
+    section{padding:84px 0}
+    .stats{gap:28px}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#0A1630"/><g fill="#3DFFC2"><rect x="5" y="17" width="3.2" height="10" rx="1.6"/><rect x="10" y="12" width="3.2" height="15" rx="1.6"/><rect x="15" y="7" width="3.2" height="20" rx="1.6"/><rect x="20" y="11" width="3.2" height="16" rx="1.6" opacity=".7"/><rect x="25" y="16" width="3.2" height="11" rx="1.6" opacity=".45"/></g></svg>
+      tide
+    </a>
+    <div class="links">
+      <a href="#">Chat</a><a href="#">Create</a><a href="#">Pricing</a><a href="#earn">Earn</a><a href="#">Docs</a>
+    </div>
+    <a class="btn btn-foam" href="#">Launch app →</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <canvas id="sea"></canvas>
+  <div class="wrap">
+    <div class="hero-inner">
+      <span class="pill"><span class="dot"></span><span class="mono" id="live">1,284 nodes online</span></span>
+      <h1>Compute that <em>flows</em> where it's needed.</h1>
+      <p class="lead">Tide is an open protocol for decentralized AI. A permissionless network of user-owned GPUs that funds inference and training of open models.</p>
+      <div class="cta">
+        <a class="btn btn-foam" href="#dev">Start building</a>
+        <a class="btn btn-ghost" href="#earn">Run a node</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b id="tps">30.2</b><span>tok/s · 284B model</span></div>
+        <div class="stat"><b>0</b><span>prompts stored</span></div>
+        <div class="stat"><b id="served">4.81M</b><span>requests served</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="ticker"><div id="tick"></div></div>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">// pick your current</div>
+    <h2>Three ways into the tide.</h2>
+    <p class="sub">Build on it, power it, or own a piece of it. Every role feeds the same network.</p>
+    <div class="doors">
+      <div class="door" id="dev">
+        <div class="tag">FOR DEVELOPERS</div>
+        <h3>Build on the network</h3>
+        <p>One OpenAI-compatible API, served by distributed nodes instead of a data center. No account. No prompt logging. Every response ships with a verifiable receipt.</p>
+        <ul><li>Drop-in OpenAI SDK support</li><li>Frontier open models, 120B–700B+</li><li>Pay per token, no subscription</li></ul>
+        <a class="more" href="#api">Read the API →</a>
+      </div>
+      <div class="door" id="earn">
+        <div class="tag">FOR GPU OWNERS</div>
+        <h3>Plug in, get paid</h3>
+        <p>Your idle GPU is dead water. Put it in the current and earn USDC for every token you serve — starting from a browser tab, all the way up to a full node.</p>
+        <ul><li>Browser node via WebGPU — zero install</li><li>Native node with Current (Ollama / CUDA)</li><li>Paid out in USDC</li></ul>
+        <a class="more" href="#">Start earning →</a>
+      </div>
+      <div class="door">
+        <div class="tag">FOR THE OPEN-MODEL COMMUNITY</div>
+        <h3>Own a piece</h3>
+        <p>Tide is infrastructure that pays for itself. Protocol revenue buys back $TIDE: half is burned, half flows to the people who stake it.</p>
+        <ul><li>Revenue-backed buybacks</li><li>Stake $TIDE, earn the flow</li><li>Open treasury, on-chain</li></ul>
+        <a class="more" href="#token">See the tokenomics →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="api" style="padding-top:40px">
+  <div class="wrap split">
+    <div>
+      <div class="eyebrow">// developers</div>
+      <h2>Change one line.<br/>Ride the tide.</h2>
+      <p class="sub">Point any OpenAI client at Tide. Your request is routed to whichever nodes are free, sharded across GPUs if the model is too big for one, and settled on-chain.</p>
+      <ul class="check">
+        <li><span><b>Uncensored open models.</b> Only illegal content is filtered.</span></li>
+        <li><span><b>Nothing stored.</b> Prompts and outputs never touch our database.</span></li>
+        <li><span><b>Receipts.</b> Verify which nodes served your tokens.</span></li>
+      </ul>
+    </div>
+<pre><span class="k">from</span> openai <span class="k">import</span> OpenAI
+
+client = OpenAI(
+    base_url=<span class="s">"https://api.tide.network/v1"</span>,
+    api_key=<span class="s">"tide_sk_..."</span>,
+)
+
+res = client.chat.completions.create(
+    model=<span class="s">"deepseek-v4-flash"</span>,
+    messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>,
+               <span class="s">"content"</span>: <span class="s">"Explain the tides."</span>}],
+    stream=<span class="k">True</span>,
+)
+<span class="c"># ≈ served by 6 GPUs across 4 countries</span></pre>
+  </div>
+</section>
+
+<section style="padding-top:40px">
+  <div class="wrap">
+    <div class="eyebrow">// how it flows</div>
+    <h2>From prompt to payout.</h2>
+    <div class="flow">
+      <div class="step"><div class="n">01 · REQUEST</div><h4>You send a prompt</h4><p>Via chat, API, or create. Paid per token, no account needed.</p></div>
+      <div class="step"><div class="n">02 · ROUTE</div><h4>The orchestrator flows it</h4><p>Jobs go to the fastest free nodes. Big models get sharded layer-by-layer.</p></div>
+      <div class="step"><div class="n">03 · SERVE</div><h4>Current runs it</h4><p>Pipelined, speculative decoding across GPUs on the open internet. Encrypted on the wire.</p></div>
+      <div class="step"><div class="n">04 · SETTLE</div><h4>Everyone gets paid</h4><p>Nodes earn USDC. Protocol fees buy back $TIDE for burns and stakers.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="token" style="padding-top:40px">
+  <div class="wrap">
+    <div class="token">
+      <div>
+        <div class="eyebrow">// $TIDE</div>
+        <h2>Usage in.<br/>Value out.</h2>
+        <p class="sub">Every paid token of inference sends protocol revenue into a buyback. What comes back gets split down the middle.</p>
+      </div>
+      <div>
+        <div class="split-bar"><div class="burn">50% BURN</div><div class="stake">50% STAKERS</div></div>
+        <div class="legend">
+          <div><b>Ebb — burned</b>Half of every buyback is removed from supply forever.</div>
+          <div><b>Flow — staked</b>Half is streamed to $TIDE stakers, pro-rata.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <div class="eyebrow">// high tide</div>
+    <h2>The biggest models, on everyone's GPUs.</h2>
+    <p class="sub" style="margin:0 auto">Rising water lifts every node.</p>
+    <div class="cta" style="margin-top:34px">
+      <a class="btn btn-foam" href="#">Try Tide Chat</a>
+      <a class="btn btn-ghost" href="#earn">Connect a GPU</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="fgrid">
+      <div>
+        <a class="brand" href="#"><svg viewBox="0 0 32 32" width="30" height="30"><rect width="32" height="32" rx="8" fill="#0A1630"/><g fill="#3DFFC2"><rect x="5" y="17" width="3.2" height="10" rx="1.6"/><rect x="10" y="12" width="3.2" height="15" rx="1.6"/><rect x="15" y="7" width="3.2" height="20" rx="1.6"/><rect x="20" y="11" width="3.2" height="16" rx="1.6" opacity=".7"/><rect x="25" y="16" width="3.2" height="11" rx="1.6" opacity=".45"/></g></svg>tide</a>
+        <p style="margin-top:14px;max-width:260px">An open protocol for decentralized AI.</p>
+      </div>
+      <div><h5>PRODUCT</h5><ul><li><a href="#">API</a></li><li><a href="#">Chat</a></li><li><a href="#">Create</a></li><li><a href="#">Earn</a></li></ul></div>
+      <div><h5>NETWORK</h5><ul><li><a href="#">Map</a></li><li><a href="#">Current engine</a></li><li><a href="#">Protocol</a></li></ul></div>
+      <div><h5>$TIDE</h5><ul><li><a href="#">Staking</a></li><li><a href="#">Treasury</a></li><li><a href="#">Data</a></li></ul></div>
+      <div><h5>RESOURCES</h5><ul><li><a href="#">Docs</a></li><li><a href="#">Blog</a></li><li><a href="#">X / Twitter</a></li><li><a href="#">GitHub</a></li></ul></div>
+    </div>
+    <div class="fine"><span>© 2026 Tide</span><span class="mono">≈ all systems flowing</span></div>
+  </div>
+</footer>
+
+<script>
+/* Hero: a sea of GPU nodes. Each dot is a node; rows form waves; bright dots are serving jobs. */
+const cv=document.getElementById('sea'),ctx=cv.getContext('2d');
+let W,H,dpr,nodes=[];
+function size(){dpr=Math.min(devicePixelRatio||1,2);W=cv.clientWidth;H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  nodes=[];const rows=22,cols=Math.ceil(W/26);
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++)nodes.push({r,c,hot:0});}
+size();addEventListener('resize',size);
+function frame(t){t/=1000;ctx.clearRect(0,0,W,H);
+  const rows=22,cols=Math.ceil(W/26);
+  for(const n of nodes){
+    const depth=n.r/rows;                             // 0 = far, 1 = near
+    const y=H*.42+depth*depth*H*.62;
+    const x=n.c*26+(n.r%2)*13;
+    const wave=Math.sin(n.c*.18+t*1.1+n.r*.35)*(10+depth*26)+Math.sin(n.c*.05-t*.6)*18*depth;
+    if(Math.random()<.0006)n.hot=1; n.hot*=.985;
+    const a=.12+depth*.5, s=.6+depth*2.2;
+    ctx.fillStyle=n.hot>.05?`rgba(61,255,194,${.35+n.hot*.65})`:`rgba(127,216,255,${a*.55})`;
+    ctx.beginPath();ctx.arc(x,y+wave,s+n.hot*2.5,0,7);ctx.fill();
+    if(n.hot>.2){ctx.fillStyle=`rgba(61,255,194,${n.hot*.12})`;ctx.beginPath();ctx.arc(x,y+wave,s+14*n.hot,0,7);ctx.fill();}
+  }
+  requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+
+/* Live-ish numbers (mock until wired to the orchestrator) */
+let online=1284,served=4810000;
+setInterval(()=>{online+=Math.round((Math.random()-.45)*6);served+=Math.floor(Math.random()*40);
+  document.getElementById('live').textContent=online.toLocaleString()+' nodes online';
+  document.getElementById('served').textContent=(served/1e6).toFixed(2)+'M';
+  document.getElementById('tps').textContent=(29.6+Math.random()*1.2).toFixed(1);},1200);
+
+/* Ticker of recent jobs */
+const models=['deepseek-v4-flash','glm-5.2','gpt-oss-120b','kimi-k3','minimax-m2.5','qwen3-coder'];
+const places=['Frankfurt','Austin','Warsaw','Lisbon','Seoul','Toronto','Oslo','Denver','Milan','Osaka'];
+let h='';for(let i=0;i<24;i++){const m=models[i%models.length],p=places[(i*7)%places.length];
+  h+=`<span><i>≈</i> ${m} · ${(Math.random()*2000|0)+120} tok · ${p} · +$${(Math.random()*.04).toFixed(4)} USDC</span>`;}
+document.getElementById('tick').innerHTML=h+h;
+</script>
+</body>
+</html>

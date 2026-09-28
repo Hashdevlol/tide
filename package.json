@@ -1,0 +1,20 @@
+{
+  "name": "tide",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["shared", "server", "node", "web"],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "dev:node": "npm run start -w node",
+    "build": "npm run build -w web",
+    "start": "npm run start -w server",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.0",
+    "tsx": "^4.21.0",
+    "@types/node": "^24.0.0"
+  }
+}

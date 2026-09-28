@@ -1,0 +1,14 @@
+{
+  "name": "tide-node",
+  "private": true,
+  "type": "module",
+  "bin": { "tide-node": "src/index.ts" },
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tide/shared": "*",
+    "socket.io-client": "^4.8.1"
+  }
+}

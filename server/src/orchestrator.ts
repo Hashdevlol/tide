@@ -1,0 +1,680 @@
+import { randomUUID } from 'node:crypto';
+import type { Server, Socket } from 'socket.io';
+import {
+  estimateTokens, textCreditCost,
+  type ChatMessage, type ErrorCode, type JobCompleteMsg, type JobErrorMsg, type JobNewMsg, type JobTokenMsg,
+  type Lane, type NetworkStats, type NodeStatus, type NodeType, type RegisterAck, type RegisterPayload,
+  type SubmitAck, type SubmitPayload, type ToolCall, type Usage,
+} from '@tide/shared';
+import { config } from './config.ts';
+import { db, now } from './db.ts';
+import { hashIp, resolveToken, type Principal, type User } from './auth.ts';
+import { recordEarning, refund, reserve, settle, type Hold } from './billing.ts';
+import { knownNodeModel, nodeServes, resolveModel, type ModelEntry } from './models.ts';
+import { BLOCKED_MESSAGE, scanText } from './safety.ts';
+import {
+  SPEED_CAP, SPEED_MIN_TOKENS, coherent, gradeCanary, isBanned, makeCanary, recordCanary, strike, type Canary,
+} from './anticheat.ts';
+
+// ---------------------------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------------------------
+
+interface NodeRec {
+  id: string;
+  socket: Socket;
+  ownerId: string;
+  ip: string;
+  model: string;
+  type: NodeType;
+  benchTokPerSec: number;
+  samples: number[];            // last 5 measured tok/s
+  status: 'idle' | 'busy';
+  jobId?: string;
+  accountAgeOk: boolean;
+  connectedAt: number;
+  jobsCompleted: number;
+  tokensGenerated: number;
+  jobsSinceCanary: number;
+  lastCanaryAt: number;
+  idleSince: number;
+}
+
+/** Where a job's output goes: a chat socket or an HTTP API response. */
+export interface JobSink {
+  onQueued?(position: number): void;
+  onAssigned?(nodeId: string): void;
+  onToken(token: string): void;
+  onComplete(r: { response: string; usage: Usage; truncated: boolean; finishReason: 'stop' | 'length' | 'tool_calls'; toolCalls?: ToolCall[] }): void;
+  onError(error: string, code: ErrorCode): void;
+}
+
+interface Job {
+  id: string;
+  user?: User;
+  source: 'chat' | 'api' | 'canary';
+  entry: ModelEntry;
+  messages: ChatMessage[];
+  think: boolean;
+  tools?: unknown[];
+  temperature?: number;
+  hold?: Hold;
+  inputTokens: number;
+  outputCap: number;
+  status: 'queued' | 'running' | 'done';
+  nodeId?: string;
+  createdAt: number;
+  dispatchedAt?: number;
+  lastTokenAt?: number;
+  tokens: number;
+  text: string;                 // in memory only, for safety/coherence checks; never persisted
+  sink?: JobSink;
+  canary?: Canary;
+  canaryNodeId?: string;
+}
+
+export interface SubmitRequest {
+  principal: Principal;
+  ip: string;
+  messages: ChatMessage[];
+  model?: string;
+  think?: boolean;
+  tools?: unknown[];
+  temperature?: number;
+  maxTokens?: number;
+  source: 'chat' | 'api';
+  sink: JobSink;
+}
+
+const NATIVE_SYSTEM = () =>
+  `You are Tide, an open model served by a decentralized network of GPUs. Today is ${new Date().toISOString().slice(0, 10)}. ` +
+  `Answer directly and helpfully.`;
+
+// ---------------------------------------------------------------------------------------------
+// Orchestrator
+// ---------------------------------------------------------------------------------------------
+
+export class Orchestrator {
+  nodes = new Map<string, NodeRec>();
+  jobs = new Map<string, Job>();
+  queue: string[] = [];
+  private submitTimes = new Map<string, number[]>();
+  private completedDurations: number[] = [];
+  private totals = { jobsCompleted: 0, tokensGenerated: 0 };
+  private timers: NodeJS.Timeout[] = [];
+
+  constructor(private io: Server) {
+    const t = (db.prepare("SELECT COUNT(*) n, COALESCE(SUM(output_tokens),0) t FROM jobs WHERE status = 'completed'").get() as { n: number; t: number });
+    this.totals = { jobsCompleted: t.n, tokensGenerated: t.t };
+
+    io.use((socket, next) => {
+      const token = (socket.handshake.auth as { token?: string })?.token;
+      const p = resolveToken(token);
+      socket.data.principal = p;       // null => spectator (stats only)
+      socket.data.ip = clientIp(socket);
+      next();
+    });
+    io.on('connection', (s) => this.onConnection(s));
+
+    this.timers.push(setInterval(() => this.sweep(), 10_000));
+    this.timers.push(setInterval(() => this.canarySweep(), 120_000));
+    this.timers.push(setInterval(() => this.io.emit('stats:update', this.stats()), 5_000));
+  }
+
+  stop() { this.timers.forEach(clearInterval); }
+
+  // ------------------------------------------------------------------ connections
+  private onConnection(s: Socket) {
+    const p = s.data.principal as Principal | null;
+    s.emit('stats:update', this.stats());
+    if (p) s.join(`user:${p.user.id}`);
+    if (p && p.kind !== 'node') this.emitNodeStatus(p.user.id, s);
+
+    // ---- node side ----
+    s.on('node:register', (payload: RegisterPayload, ack?: (r: RegisterAck) => void) => {
+      const r = this.registerNode(s, payload);
+      ack?.(r);
+    });
+    s.on('node:unregister', () => this.dropNode(s.data.nodeId, 'unregistered'));
+    s.on('job:token', (m: JobTokenMsg) => this.onNodeToken(s, m));
+    s.on('job:complete', (m: JobCompleteMsg) => this.onNodeComplete(s, m));
+    s.on('job:error', (m: JobErrorMsg) => this.onNodeError(s, m));
+
+    // ---- client side ----
+    s.on('job:submit', (payload: SubmitPayload, ack?: (r: SubmitAck) => void) => {
+      if (!p || p.kind === 'node') return ack?.({ error: 'Sign in first', code: 'UNAUTHORIZED' });
+      let jobId = '';
+      const sink: JobSink = {
+        onQueued: (position) => s.emit('queue:position', { jobId, position }),
+        onAssigned: (nodeId) => s.emit('job:assigned', { jobId, nodeId }),
+        onToken: (token) => s.emit('job:token', { jobId, token }),
+        onComplete: (r) => s.emit('job:complete', { jobId, ...r }),
+        onError: (error, code) => s.emit('job:error', { jobId, error, code }),
+      };
+      const r = this.submit({
+        principal: p, ip: s.data.ip, messages: payload?.messages, model: payload?.model, think: payload?.think,
+        source: 'chat', sink,
+      });
+      if ('jobId' in r) {
+        jobId = r.jobId;
+        (s.data.jobs ??= new Set<string>()).add(jobId);
+      }
+      ack?.(r);
+      if ('jobId' in r) this.processQueue();
+    });
+    s.on('job:abort', ({ jobId }: { jobId: string }) => {
+      if ((s.data.jobs as Set<string> | undefined)?.has(jobId)) this.abort(jobId);
+    });
+
+    s.on('disconnect', () => {
+      if (s.data.nodeId) this.dropNode(s.data.nodeId, 'disconnected');
+      for (const jobId of (s.data.jobs as Set<string> | undefined) ?? []) this.abort(jobId, true);
+    });
+  }
+
+  // ------------------------------------------------------------------ nodes
+  private registerNode(s: Socket, p: RegisterPayload): RegisterAck {
+    const pr = s.data.principal as Principal | null;
+    if (!pr) return { error: 'Missing or invalid node token' };
+    if (pr.user.kind === 'anon') return { error: 'Sign in with a wallet to run a node' };
+    if (s.data.nodeId && this.nodes.has(s.data.nodeId)) return { nodeId: s.data.nodeId };
+    const owner = pr.user;
+    if (isBanned(owner.id)) return { error: 'This account is banned from serving' };
+
+    const type: NodeType = p?.type === 'native' ? 'native' : 'browser';
+    if (type === 'native' && pr.kind !== 'node') return { error: 'Native nodes must authenticate with a node token (tnt_…)' };
+    const model = String(p?.model ?? '');
+    if (!knownNodeModel(model, type)) return { error: `Model "${model}" is not served by the network. Update your node.` };
+    const tps = Number(p?.tokPerSec) || 0;
+    if (tps < config.minTokPerSec) return { error: `Too slow: ${tps.toFixed(1)} tok/s (minimum ${config.minTokPerSec})` };
+
+    const mine = [...this.nodes.values()];
+    if (mine.filter((n) => n.ownerId === owner.id).length >= config.maxNodesPerAccount) return { error: 'Too many nodes on this account' };
+    if (mine.filter((n) => n.ip === s.data.ip).length >= config.maxNodesPerIp) return { error: 'Too many nodes from this IP' };
+
+    const node: NodeRec = {
+      id: 'n_' + randomUUID().slice(0, 12),
+      socket: s,
+      ownerId: owner.id,
+      ip: s.data.ip,
+      model,
+      type,
+      benchTokPerSec: tps,
+      samples: [],
+      status: 'idle',
+      accountAgeOk: now() - owner.created_at >= config.minNodeAccountAgeHours * 3600_000,
+      connectedAt: now(),
+      jobsCompleted: 0,
+      tokensGenerated: 0,
+      jobsSinceCanary: 0,
+      lastCanaryAt: now(),
+      idleSince: now(),
+    };
+    this.nodes.set(node.id, node);
+    s.data.nodeId = node.id;
+    log(`node ${node.id} online: ${type} ${model} @ ${tps.toFixed(1)} tok/s (owner ${owner.id.slice(0, 8)})`);
+    this.emitNodeStatus(owner.id);
+    this.broadcastStats();
+    this.processQueue();
+    return { nodeId: node.id };
+  }
+
+  private dropNode(nodeId: string | undefined, why: string) {
+    if (!nodeId) return;
+    const node = this.nodes.get(nodeId);
+    if (!node) return;
+    this.nodes.delete(nodeId);
+    node.socket.data.nodeId = undefined;
+    log(`node ${nodeId} offline (${why})`);
+    const job = node.jobId ? this.jobs.get(node.jobId) : undefined;
+    if (job && job.status === 'running') {
+      if (job.canary) {
+        this.finishJob(job);
+      } else if (job.tokens === 0) {
+        // Nothing delivered yet: put it back at the head of the queue.
+        job.status = 'queued';
+        job.nodeId = undefined;
+        job.dispatchedAt = undefined;
+        this.queue.unshift(job.id);
+      } else {
+        this.failJob(job, 'The node serving this answer went offline', 'NODE_GONE');
+      }
+    }
+    this.emitNodeStatus(node.ownerId);
+    this.broadcastStats();
+    this.processQueue();
+  }
+
+  private kick(node: NodeRec, reason: string) {
+    node.socket.emit('node:kicked', { reason });
+    this.dropNode(node.id, `kicked: ${reason}`);
+  }
+
+  private speed(n: NodeRec) {
+    const s = n.samples.length ? n.samples.reduce((a, b) => a + b, 0) / n.samples.length : n.benchTokPerSec;
+    return Math.max(5, s);
+  }
+
+  // ------------------------------------------------------------------ submit
+  submit(req: SubmitRequest): { jobId: string; lane: Lane } | { error: string; code: ErrorCode } {
+    const { principal, sink } = req;
+    const user = principal.user;
+    if (!Array.isArray(req.messages) || req.messages.length === 0) return { error: '`messages` must be a non-empty array', code: 'BAD_REQUEST' };
+    const messages: ChatMessage[] = req.messages
+      .filter((m) => m && typeof m === 'object')
+      .map((m) => ({ ...m, content: typeof m.content === 'string' ? m.content : '' }));
+
+    const resolved = resolveModel(req.model);
+    if (!resolved) return { error: `Unknown model "${req.model}"`, code: 'UNKNOWN_MODEL' };
+    const { entry } = resolved;
+    const think = resolved.think || !!req.think;
+
+    // Safety floor on the prompt.
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+    if (!scanText(messages.map((m) => m.content).join('\n')).safe) return { error: 'Request blocked by safety filter', code: 'SAFETY' };
+
+    // Rate limit (API keys have their own per-minute limiter in the HTTP layer).
+    if (req.source === 'chat') {
+      const times = (this.submitTimes.get(user.id) ?? []).filter((t) => t > now() - 300_000);
+      if (times.length >= config.jobsPer5Min) return { error: 'Slow down — too many requests', code: 'RATE_LIMIT' };
+      times.push(now());
+      this.submitTimes.set(user.id, times);
+    }
+
+    const trimmed = trimToBudget(messages, entry.inputBudget);
+    if (!trimmed) return { error: `Message too long for ${entry.name} (max ~${entry.inputBudget} tokens)`, code: 'CONTEXT_TOO_LONG' };
+    if (!lastUser && !trimmed.some((m) => m.role === 'tool')) return { error: 'No user message', code: 'BAD_REQUEST' };
+
+    const servingNodes = [...this.nodes.values()].filter((n) => nodeServes(entry, n.model, n.type));
+    if (servingNodes.length === 0) return { error: `No nodes are serving ${entry.name} right now`, code: 'NO_CAPACITY' };
+
+    const inputTokens = trimmed.reduce((a, m) => a + estimateTokens(m.content) + 4, 0);
+    let outputCap = think ? entry.outputCapThink : entry.outputCap;
+    if (req.maxTokens && req.maxTokens > 0) outputCap = Math.min(outputCap, Math.floor(req.maxTokens));
+    const holdCredits = textCreditCost(inputTokens, outputCap);
+
+    const r = reserve(user, holdCredits, {
+      viaApiKey: principal.kind === 'apikey',
+      ipHash: hashIp(req.ip),
+      hasFreeCapacity: servingNodes.some((n) => n.accountAgeOk),
+    });
+    if ('error' in r) return r;
+
+    const job: Job = {
+      id: 'job_' + randomUUID().replace(/-/g, '').slice(0, 20),
+      user,
+      source: req.source,
+      entry,
+      messages: trimmed,
+      think,
+      tools: req.tools,
+      temperature: req.temperature,
+      hold: r.hold,
+      inputTokens,
+      outputCap,
+      status: 'queued',
+      createdAt: now(),
+      tokens: 0,
+      text: '',
+      sink,
+    };
+    this.jobs.set(job.id, job);
+    this.queue.push(job.id);
+    return { jobId: job.id, lane: r.hold.lane };
+  }
+
+  /** Stop a job at the user's request (or because their connection dropped). */
+  abort(jobId: string, silent = false) {
+    const job = this.jobs.get(jobId);
+    if (!job || job.status === 'done') return;
+    if (silent) job.sink = undefined;
+    this.failJob(job, 'Stopped', 'ABORTED');
+  }
+
+  // ------------------------------------------------------------------ dispatch
+  processQueue() {
+    for (let i = 0; i < this.queue.length; i++) {
+      const job = this.jobs.get(this.queue[i]);
+      if (!job || job.status !== 'queued') { this.queue.splice(i--, 1); continue; }
+      const freeLane = job.hold?.lane === 'free' || job.hold?.subsidyKind === 'free_grant';
+      const idle = [...this.nodes.values()].filter(
+        (n) => n.status === 'idle' && nodeServes(job.entry, n.model, n.type) && (!freeLane || n.accountAgeOk),
+      );
+      if (idle.length === 0) continue;
+      this.queue.splice(i--, 1);
+      this.dispatch(job, pickWeighted(idle, (n) => this.speed(n)));
+    }
+    this.queue.forEach((id, idx) => this.jobs.get(id)?.sink?.onQueued?.(idx + 1));
+  }
+
+  private dispatch(job: Job, node: NodeRec) {
+    job.status = 'running';
+    job.nodeId = node.id;
+    job.dispatchedAt = now();
+    job.lastTokenAt = now();
+    node.status = 'busy';
+    node.jobId = job.id;
+    job.sink?.onAssigned?.(node.id);
+
+    let messages = job.messages;
+    if (node.type === 'native' && !messages.some((m) => m.role === 'system')) {
+      messages = [{ role: 'system', content: NATIVE_SYSTEM() }, ...messages];
+    }
+    const msg: JobNewMsg = {
+      jobId: job.id,
+      messages,
+      maxTokens: job.outputCap,
+      think: job.think,
+      tools: job.tools,
+      temperature: job.temperature,
+    };
+    node.socket.emit('job:new', msg);
+    this.emitNodeStatus(node.ownerId);
+  }
+
+  // ------------------------------------------------------------------ node events
+  private jobFor(s: Socket, jobId: string): { job: Job; node: NodeRec } | null {
+    const node = this.nodes.get(s.data.nodeId);
+    const job = this.jobs.get(jobId);
+    if (!node || !job || job.nodeId !== node.id || job.status !== 'running') return null;
+    return { job, node };
+  }
+
+  private onNodeToken(s: Socket, m: JobTokenMsg) {
+    const r = this.jobFor(s, m?.jobId);
+    if (!r || typeof m.token !== 'string') return;
+    const { job } = r;
+    job.tokens++;
+    job.text += m.token;
+    job.lastTokenAt = now();
+    if (job.tokens % 16 === 0 && !scanText(job.text.slice(-600)).safe) {
+      job.sink?.onToken('\n\n' + BLOCKED_MESSAGE);
+      this.failJob(job, 'Blocked by safety filter', 'SAFETY');
+      return;
+    }
+    if (job.tokens > job.outputCap + 32) {
+      // Node ignored the output cap; stop paying for more.
+      this.completeJob(job, r.node, { jobId: job.id, response: job.text, tokensGenerated: job.tokens, doneReason: 'length' });
+      return;
+    }
+    job.sink?.onToken(m.token);
+  }
+
+  private onNodeComplete(s: Socket, m: JobCompleteMsg) {
+    const r = this.jobFor(s, m?.jobId);
+    if (!r) return;
+    this.completeJob(r.job, r.node, m);
+  }
+
+  private onNodeError(s: Socket, m: JobErrorMsg) {
+    const r = this.jobFor(s, m?.jobId);
+    if (!r) return;
+    if (r.job.canary) {
+      recordCanary(r.node.ownerId, r.node.id, 'neutral');
+      this.finishJob(r.job);
+      return;
+    }
+    this.failJob(r.job, `Node error: ${String(m.error ?? 'unknown').slice(0, 200)}`, 'NODE_ERROR');
+  }
+
+  private completeJob(job: Job, node: NodeRec, m: JobCompleteMsg) {
+    const elapsed = Math.max(1, now() - (job.dispatchedAt ?? now()));
+    const text = job.text || (typeof m.response === 'string' ? m.response : '');
+    const toolCalls = Array.isArray(m.toolCalls) && m.toolCalls.length && job.tools ? m.toolCalls : undefined;
+
+    // ---- canary grading ----
+    if (job.canary) {
+      const pass = gradeCanary(job.canary, text);
+      log(`canary ${pass ? 'PASS' : 'FAIL'} on ${node.id}`);
+      const banned = recordCanary(node.ownerId, node.id, pass ? 'pass' : 'fail');
+      this.finishJob(job);
+      if (banned) this.kick(node, 'failed verification probes');
+      return;
+    }
+
+    // ---- final safety scan ----
+    if (!scanText(text).safe) {
+      job.sink?.onToken('\n\n' + BLOCKED_MESSAGE);
+      this.failJob(job, 'Blocked by safety filter', 'SAFETY');
+      return;
+    }
+
+    const counted = Math.min(job.tokens, job.outputCap);
+    const truncated = m.doneReason === 'length' || job.tokens >= job.outputCap;
+    const hold = job.hold!;
+    const delivered = counted > 0 || !!toolCalls;
+
+    // Anti-cheat before paying the node.
+    let pay = delivered;
+    const tps = counted / (elapsed / 1000);
+    if (counted >= SPEED_MIN_TOKENS && tps > SPEED_CAP[node.type]) {
+      pay = false;
+      log(`speed strike on ${node.id}: ${tps.toFixed(0)} tok/s`);
+      if (strike(node.ownerId, 'impossible speed')) this.kick(node, 'banned');
+    } else if (!toolCalls && !coherent(text)) {
+      pay = false;
+      log(`coherence strike on ${node.id}`);
+      if (strike(node.ownerId, 'incoherent output')) this.kick(node, 'banned');
+    }
+
+    let charged = 0;
+    if (delivered) {
+      charged = settle(hold, textCreditCost(job.inputTokens, counted), job.id);
+    } else {
+      refund(hold, job.id);
+    }
+    if (pay && charged > 0) {
+      recordEarning({ jobId: job.id, ownerId: node.ownerId, payerId: job.user!.id, hold, charged, tokens: counted });
+    }
+
+    // Stats + speed samples
+    if (counted >= 50) {
+      node.samples = [...node.samples, tps].slice(-5);
+      if (node.samples.length >= 3 && node.samples.reduce((a, b) => a + b, 0) / node.samples.length < config.minTokPerSec) {
+        this.kick(node, 'sustained speed below minimum');
+      }
+    }
+    node.jobsCompleted++;
+    node.tokensGenerated += counted;
+    node.jobsSinceCanary++;
+    this.totals.jobsCompleted++;
+    this.totals.tokensGenerated += counted;
+    this.completedDurations = [...this.completedDurations, elapsed].slice(-50);
+    node.socket.emit('job:counted', { jobId: job.id, tokensGenerated: counted });
+
+    job.sink?.onComplete({
+      response: text,
+      usage: { inputTokens: job.inputTokens, outputTokens: counted, credits: charged },
+      truncated,
+      finishReason: toolCalls ? 'tool_calls' : truncated ? 'length' : 'stop',
+      toolCalls,
+    });
+    this.persistJob(job, node, 'completed', counted, charged);
+    this.finishJob(job);
+
+    // Occasionally verify the node with a canary while the network is quiet.
+    if (this.queue.length === 0 && (node.jobsSinceCanary >= 15 || Math.random() < 1 / 15)) {
+      setTimeout(() => this.sendCanary(node), 250);
+    }
+  }
+
+  /** End a job without a normal completion: settle what was delivered, refund if nothing was. */
+  private failJob(job: Job, error: string, code: ErrorCode) {
+    if (job.status === 'done') return;
+    const node = job.nodeId ? this.nodes.get(job.nodeId) : undefined;
+    if (job.hold) {
+      const counted = Math.min(job.tokens, job.outputCap);
+      if (counted > 0) {
+        // Tokens were delivered: bill for what streamed. Only a user-initiated stop pays the node.
+        const charged = settle(job.hold, textCreditCost(job.inputTokens, counted), job.id);
+        if (node && code === 'ABORTED' && coherent(job.text)) {
+          recordEarning({ jobId: job.id, ownerId: node.ownerId, payerId: job.user!.id, hold: job.hold, charged, tokens: counted });
+        }
+        this.persistJob(job, node, code === 'ABORTED' ? 'aborted' : 'failed', counted, charged);
+      } else {
+        refund(job.hold, job.id);
+        this.persistJob(job, node, 'failed', 0, 0);
+      }
+    }
+    if (node && job.status === 'running') node.socket.emit('job:cancel', { jobId: job.id });
+    job.sink?.onError(error, code);
+    this.finishJob(job);
+  }
+
+  private finishJob(job: Job) {
+    job.status = 'done';
+    job.sink = undefined;
+    job.text = '';
+    this.jobs.delete(job.id);
+    const qi = this.queue.indexOf(job.id);
+    if (qi >= 0) this.queue.splice(qi, 1);
+    const node = job.nodeId ? this.nodes.get(job.nodeId) : undefined;
+    if (node && node.jobId === job.id) {
+      node.status = 'idle';
+      node.jobId = undefined;
+      node.idleSince = now();
+      this.emitNodeStatus(node.ownerId);
+    }
+    setTimeout(() => this.processQueue(), 100);
+  }
+
+  private persistJob(job: Job, node: NodeRec | undefined, status: string, outTokens: number, credits: number) {
+    if (!job.user) return;
+    db.prepare(
+      `INSERT OR REPLACE INTO jobs(id, user_id, node_id, node_owner, model, lane, source, status, input_tokens, output_tokens, credits, duration_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(job.id, job.user.id, node?.id ?? null, node?.ownerId ?? null, job.entry.id, job.hold?.lane ?? 'free', job.source, status,
+      job.inputTokens, outTokens, credits, job.dispatchedAt ? now() - job.dispatchedAt : null, job.createdAt);
+  }
+
+  // ------------------------------------------------------------------ canaries
+  private sendCanary(node: NodeRec) {
+    if (!this.nodes.has(node.id) || node.status !== 'idle' || this.queue.length > 0) return;
+    const entry = [...[resolveModel('tide-max'), resolveModel('tide-lite'), resolveModel('tide-dev')]]
+      .map((r) => r?.entry).find((e) => e && nodeServes(e, node.model, node.type));
+    if (!entry) return;
+    const c = makeCanary();
+    const job: Job = {
+      id: 'job_' + randomUUID().replace(/-/g, '').slice(0, 20),
+      source: 'canary', entry, messages: c.messages, think: false, inputTokens: 0, outputCap: 256,
+      status: 'queued', createdAt: now(), tokens: 0, text: '', canary: c,
+    };
+    node.jobsSinceCanary = 0;
+    node.lastCanaryAt = now();
+    this.jobs.set(job.id, job);
+    this.dispatch(job, node);
+  }
+
+  private canarySweep() {
+    if (this.queue.length > 0) return;
+    const due = [...this.nodes.values()].find((n) => n.status === 'idle' && now() - n.lastCanaryAt > 300_000 && now() - n.idleSince > 5_000);
+    if (due) this.sendCanary(due);
+  }
+
+  // ------------------------------------------------------------------ liveness
+  private sweep() {
+    const t = now();
+    for (const job of [...this.jobs.values()]) {
+      if (job.status === 'queued' && t - job.createdAt > config.queueTimeout) {
+        this.failJob(job, 'Timed out waiting for a free node', 'TIMEOUT');
+      } else if (job.status === 'running') {
+        const since = t - (job.dispatchedAt ?? t);
+        const ceiling = job.canary ? config.canaryCeiling : config.jobCeiling;
+        const stalled = job.tokens === 0 ? since > config.firstTokenTimeout : t - (job.lastTokenAt ?? t) > config.tokenGapTimeout;
+        if (stalled || since > ceiling) {
+          if (job.canary) {
+            const node = this.nodes.get(job.nodeId!);
+            if (node) {
+              node.socket.emit('job:cancel', { jobId: job.id });
+              if (recordCanary(node.ownerId, node.id, 'fail')) this.kick(node, 'failed verification probes');
+            }
+            this.finishJob(job);
+          } else {
+            this.failJob(job, 'The node stopped responding', 'TIMEOUT');
+          }
+        }
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------ stats
+  stats(): NetworkStats {
+    const nodes = [...this.nodes.values()].filter((n) => n.accountAgeOk || !config.isProd);
+    const byModel: Record<string, number> = {};
+    for (const n of nodes) {
+      const e = [resolveModel('tide-max'), resolveModel('tide-lite'), resolveModel('tide-dev')].map((r) => r?.entry).find((x) => x && nodeServes(x, n.model, n.type));
+      if (e) byModel[e.id] = (byModel[e.id] ?? 0) + 1;
+    }
+    const speeds = nodes.map((n) => this.speed(n));
+    return {
+      nodesOnline: nodes.length,
+      browserNodes: nodes.filter((n) => n.type === 'browser').length,
+      nativeNodes: nodes.filter((n) => n.type === 'native').length,
+      byModel,
+      busy: nodes.filter((n) => n.status === 'busy').length,
+      queueDepth: this.queue.length,
+      jobsCompleted: this.totals.jobsCompleted,
+      tokensGenerated: this.totals.tokensGenerated,
+      avgTokPerSec: speeds.length ? +(speeds.reduce((a, b) => a + b, 0) / speeds.length).toFixed(1) : 0,
+      at: now(),
+    };
+  }
+
+  modelAvailability(id: string): number {
+    const r = resolveModel(id);
+    return r ? [...this.nodes.values()].filter((n) => nodeServes(r.entry, n.model, n.type)).length : 0;
+  }
+
+  private broadcastStats() { this.io.emit('stats:update', this.stats()); }
+
+  nodesForOwner(ownerId: string): NodeStatus[] {
+    return [...this.nodes.values()].filter((n) => n.ownerId === ownerId).map((n) => ({
+      nodeId: n.id, model: n.model, type: n.type, status: n.status, tokPerSec: +this.speed(n).toFixed(1),
+      jobsCompleted: n.jobsCompleted, tokensGenerated: n.tokensGenerated, connectedAt: n.connectedAt,
+    }));
+  }
+
+  private emitNodeStatus(ownerId: string, only?: Socket) {
+    const payload = this.nodesForOwner(ownerId);
+    if (only) only.emit('node:status', payload);
+    else this.io.to(`user:${ownerId}`).emit('node:status', payload);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------------------------
+
+function clientIp(s: Socket): string {
+  const xf = s.handshake.headers['x-forwarded-for'];
+  const first = (Array.isArray(xf) ? xf[0] : xf)?.split(',')[0]?.trim();
+  return first || (s.handshake.headers['x-real-ip'] as string) || s.handshake.address || 'unknown';
+}
+
+function pickWeighted<T>(items: T[], weight: (t: T) => number): T {
+  const ws = items.map(weight);
+  let r = Math.random() * ws.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < items.length; i++) { r -= ws[i]; if (r <= 0) return items[i]; }
+  return items[items.length - 1];
+}
+
+/**
+ * Drop the oldest non-system turns until the prompt fits. System messages and the newest
+ * message are always kept. Returns null if the newest message alone is too long.
+ */
+export function trimToBudget(messages: ChatMessage[], budget: number): ChatMessage[] | null {
+  const cost = (m: ChatMessage) => estimateTokens(m.content) + 4;
+  const out = [...messages];
+  let total = out.reduce((a, m) => a + cost(m), 0);
+  let i = 0;
+  while (total > budget && i < out.length - 1) {
+    if (out[i].role === 'system') { i++; continue; }
+    total -= cost(out[i]);
+    out.splice(i, 1);
+  }
+  // Drop orphaned tool results whose assistant tool-call turn was trimmed.
+  while (out.length > 1 && out[0].role === 'tool') out.shift();
+  return total > budget ? null : out;
+}
+
+const log = (...a: unknown[]) => console.log(`[orch ${new Date().toISOString().slice(11, 19)}]`, ...a);
