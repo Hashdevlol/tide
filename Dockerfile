@@ -20,7 +20,7 @@ COPY --from=build /app/package.json ./
 COPY --from=build /app/shared shared
 COPY --from=build /app/server server
 COPY --from=build /app/web/dist web/dist
-VOLUME /data
 EXPOSE 3001
+# Persist /data with a platform volume (Railway: add a Volume mounted at /data; compose: tide-data).
 WORKDIR /app/server
 CMD ["node", "--import", "tsx", "src/index.ts"]
