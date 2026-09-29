@@ -133,7 +133,7 @@ npx tsx node/src/index.ts --token tnt_... --url ${origin} --backend mock`;
     <>
       <div className="page wrap">
         <div className="page-head">
-          <div className="eyebrow">// docs</div>
+          <div className="eyebrow">docs</div>
           <h1>API reference</h1>
           <p>Tide speaks the OpenAI Chat Completions protocol. If your code works with OpenAI, it works with Tide — change the base URL and the key.</p>
         </div>

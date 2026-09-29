@@ -27,7 +27,7 @@ export default function Earn() {
     <>
       <div className="page wrap">
         <div className="page-head">
-          <div className="eyebrow">// earn</div>
+          <div className="eyebrow">earn</div>
           <h1>Put your GPU in the <em>current</em>.</h1>
           <p>Serve open models to the network and earn USDC for every token. Nodes earn <b className="foam">{Math.round(NODE_SHARE * 100)}%</b> of what users pay.</p>
         </div>

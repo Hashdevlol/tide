@@ -1,5 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   CREDITS_PER_USD, CREDITS_PER_USD_PURCHASED, PLANS, PRICE_IN_PER_M_USD, PRICE_OUT_PER_M_USD,
   type ChatMessage, type ErrorCode, type PlanId,
@@ -57,6 +57,25 @@ export function createApi(orch: Orchestrator) {
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.get('/api/stats', (_req, res) => res.json(orch.stats()));
   app.get('/api/swarm', (_req, res) => res.json(orch.swarmView()));
+
+  // Public, anonymised receipts of recently completed jobs (no users, no prompts, hashed ids).
+  app.get('/api/feed', (req, res) => {
+    const limit = Math.min(60, Math.max(1, Number(req.query.limit) || 24));
+    const rows = db.prepare(
+      `SELECT j.id, j.node_id, j.model, j.input_tokens, j.output_tokens, j.credits, j.duration_ms, j.created_at, j.source,
+              (SELECT COALESCE(SUM(e.usd), 0) FROM node_earnings e WHERE e.job_id = j.id OR e.job_id LIKE j.id || '#%') node_usd
+         FROM jobs j WHERE j.status = 'completed' ORDER BY j.created_at DESC LIMIT ?`,
+    ).all(limit) as { id: string; node_id: string | null; model: string; input_tokens: number; output_tokens: number; credits: number; duration_ms: number | null; created_at: number; source: string; node_usd: number }[];
+    const h = (s: string) => createHash('sha256').update(s).digest('hex');
+    res.json({
+      receipts: rows.map((r) => ({
+        hash: h(r.id).slice(0, 16), node: r.node_id ? 'n_' + h(r.node_id).slice(0, 6) : 'swarm', model: r.model, kind: r.source === 'image' ? 'image' : 'text',
+        tokensIn: r.input_tokens, tokensOut: r.output_tokens, credits: r.credits, paidUsd: +r.node_usd.toFixed(6),
+        ms: r.duration_ms, at: r.created_at,
+      })),
+      totals: db.prepare("SELECT COUNT(*) jobs, COALESCE(SUM(output_tokens),0) tokens FROM jobs WHERE status = 'completed'").get(),
+    });
+  });
 
   // ------------------------------------------------------------------ auth
   const anonLimit = limiter(20, 3600_000);

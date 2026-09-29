@@ -33,7 +33,7 @@ export default function Pricing() {
     <>
       <div className="page wrap">
         <div className="page-head center" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <div className="eyebrow">// pricing</div>
+          <div className="eyebrow">pricing</div>
           <h1>Pay for tokens, <em>not</em> data centers.</h1>
           <p>Every plan includes a daily credit grant. Need more? Buy credits that never expire.</p>
         </div>

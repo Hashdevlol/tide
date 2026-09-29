@@ -38,7 +38,7 @@ export default function Admin() {
     <div className="page wrap stack" style={{ gap: 22 }}>
       <div className="row-between">
         <div>
-          <div className="eyebrow">// operator console</div>
+          <div className="eyebrow">operator console</div>
           <h1 style={{ fontSize: 34 }}>Admin</h1>
         </div>
         <button className="btn btn-ghost btn-sm" onClick={() => { sessionStorage.removeItem(KEY); setAuthed(false); }}>Lock</button>

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useNetworkStats, useSocketConnected } from '../lib/socket';
 import { fmtCompact, fmtInt, fmtUsd, shortAddr } from '../lib/format';
-import { Sea } from '../components/Sea';
+import { NodeField } from '../components/NodeField';
 import { Footer } from '../components/Nav';
 
 export interface Treasury {
@@ -84,13 +84,13 @@ export default function Network() {
     <>
       <div className="page wrap">
         <div className="page-head">
-          <div className="eyebrow">// network</div>
+          <div className="eyebrow">network</div>
           <h1>The tide, <em>live</em>.</h1>
           <p>Every node, job and token flowing through Tide right now. Updates every few seconds from the orchestrator.</p>
         </div>
 
         <div className="net-hero">
-          <Sea activity={0.1 + busyPct * 0.9} className="sea" horizon={0.3} />
+          <NodeField height={320} seed={11} />
           <div className="overlay">
             <div className="row" style={{ gap: 8, marginBottom: 10 }}>
               <span className={`dot${connected ? '' : ' off'}`} />

@@ -119,7 +119,7 @@ export default function Create() {
     <div className="page wrap create">
       <div className="create-head">
         <div>
-          <div className="eyebrow">// create</div>
+          <div className="eyebrow">create</div>
           <h1>Images, rendered by the network.</h1>
           <p className="muted">Every image is drawn on a community GPU. 10 credits each · private history stays in this browser.</p>
         </div>

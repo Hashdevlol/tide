@@ -27,7 +27,7 @@ export default function Settings() {
   return (
     <div className="page wrap">
       <div className="page-head">
-        <div className="eyebrow">// settings</div>
+        <div className="eyebrow">settings</div>
         <h1>Your account</h1>
       </div>
       <div className="settings">

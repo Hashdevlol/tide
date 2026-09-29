@@ -41,7 +41,7 @@ export function Nav({ full = false }: { full?: boolean }) {
         <div className="wrap">
           <Link className="brand" to="/" aria-label="Tide home">
             <LogoMark />
-            tide
+            Tide
           </Link>
           <div className="nav-links">
             {NAV_LINKS.map((l) => (
@@ -49,7 +49,7 @@ export function Nav({ full = false }: { full?: boolean }) {
             ))}
           </div>
           <div className="nav-actions">
-            {loc.pathname === '/' && <Link to="/chat" className="btn btn-foam btn-sm hide-sm">Launch app →</Link>}
+            {loc.pathname === '/' && <Link to="/chat" className="btn btn-ink btn-sm hide-sm">Open chat →</Link>}
             <AccountButton compact={loc.pathname === '/'} />
             <button className="menu-btn" onClick={() => setOpen((o) => !o)} aria-label="Menu" aria-expanded={open}>
               <span />
@@ -75,15 +75,16 @@ export function Footer() {
       <div className="wrap">
         <div className="fgrid">
           <div>
-            <Link className="brand" to="/"><LogoMark />tide</Link>
-            <p style={{ marginTop: 14, maxWidth: 260 }}>An open protocol for decentralized AI.</p>
+            <Link className="brand" to="/"><LogoMark invert />Tide</Link>
+            <p style={{ marginTop: 16, maxWidth: 300 }}>AI on everyone's GPUs. Open models, per-token pricing, nothing you type is stored.</p>
           </div>
-          <div><h5>PRODUCT</h5><ul><li><Link to="/docs">API</Link></li><li><Link to="/chat">Chat</Link></li><li><Link to="/pricing">Pricing</Link></li><li><Link to="/earn">Earn</Link></li></ul></div>
-          <div><h5>NETWORK</h5><ul><li><Link to="/network">Live stats</Link></li><li><Link to="/earn">Run a node</Link></li><li><Link to="/docs#nodes">Node docs</Link></li></ul></div>
-          <div><h5>EARN</h5><ul><li><Link to="/earn">Run a node</Link></li><li><Link to="/#economics">Where money goes</Link></li><li><Link to="/network#economics">Payouts</Link></li><li><Link to="/settings#account">Referrals</Link></li></ul></div>
-          <div><h5>RESOURCES</h5><ul><li><Link to="/docs">Docs</Link></li><li><Link to="/pricing#faq">FAQ</Link></li><li><Link to="/settings#keys">API keys</Link></li></ul></div>
+          <div><h5>USE</h5><ul><li><Link to="/chat">Chat</Link></li><li><Link to="/create">Create</Link></li><li><Link to="/pricing">Pricing</Link></li><li><Link to="/docs">API</Link></li></ul></div>
+          <div><h5>EARN</h5><ul><li><Link to="/earn">Run a node</Link></li><li><Link to="/docs#nodes">Node docs</Link></li><li><Link to="/settings#account">Referrals</Link></li></ul></div>
+          <div><h5>NETWORK</h5><ul><li><Link to="/network">Live stats</Link></li><li><Link to="/network#swarms">Swarms</Link></li><li><Link to="/network#economics">Payouts</Link></li></ul></div>
+          <div><h5>HELP</h5><ul><li><Link to="/pricing#faq">FAQ</Link></li><li><Link to="/settings#keys">API keys</Link></li><li><Link to="/settings">Settings</Link></li></ul></div>
         </div>
-        <div className="fine"><span>© 2026 Tide</span><span className="mono">≈ all systems flowing</span></div>
+        <div className="footer-word" aria-hidden="true">Tide</div>
+        <div className="fine"><span>© 2026 TIDE. OPEN MODELS. NO PROMPTS STORED.</span><span>70% OF EVERY PAID TOKEN GOES TO THE GPU THAT MADE IT.</span></div>
       </div>
     </footer>
   );
