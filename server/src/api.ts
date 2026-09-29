@@ -19,7 +19,6 @@ import type { Orchestrator } from './orchestrator.ts';
 import {
   checkDeposit, createIntent, explorerTx, finishPayoutOnchain, getOrCreateDepositWallet, openIntent, releaseIntent, solanaConfig, solanaEnabled,
 } from './solana.ts';
-import * as staking from './staking.ts';
 import { createAdmin } from './admin.ts';
 
 type AuthedReq = Request & { principal?: Principal };
@@ -271,47 +270,9 @@ export function createApi(orch: Orchestrator) {
   });
 
   app.get('/api/treasury', (_req, res) => {
-    const b = treasurySummary();
-    const st = staking.stats();
     const paidToNodes = (db.prepare('SELECT COALESCE(SUM(usd),0) s FROM node_earnings').get() as { s: number }).s;
-    res.json({
-      launched: staking.stakingEnabled(), tokenMint: staking.tokenMint() || null,
-      pendingBuyback: b.buyback ?? 0, pendingStakerRewards: b.staker_rewards ?? 0, paidToNodes,
-      totalStaked: staking.totalStaked(), tideBurned: st.tide_burned ?? 0, buybackSpentUsd: st.buyback_spent_usd ?? 0,
-      stakerRewardsPaidUsd: st.staker_rewards_paid_usd ?? 0,
-    });
-  });
-
-  // ------------------------------------------------------------------ $TIDE staking
-  app.get('/api/staking', session, signedIn, async (req: AuthedReq, res) => {
-    const uid = req.principal!.user.id;
-    if (!staking.stakingEnabled()) return res.json({ enabled: false, threshold: staking.WORKER_STAKE_THRESHOLD });
-    let stale = false;
-    try { await staking.refreshStake(uid); } catch { stale = true; }
-    res.json({
-      enabled: true, stale, mint: staking.tokenMint(), address: staking.getOrCreateStakingWallet(uid),
-      ...staking.stakeOf(uid), rewards: staking.rewardsOf(uid), boost: staking.hasNodeBoost(uid),
-      threshold: staking.WORKER_STAKE_THRESHOLD, minAgeHours: staking.STAKE_MIN_AGE_MS / 3600_000,
-    });
-  });
-  const stakeLimit = limiter(1, 5_000);
-  app.post('/api/staking/unstake', session, signedIn, async (req: AuthedReq, res) => {
-    const u = req.principal!.user;
-    if (!staking.stakingEnabled()) return res.status(503).json({ error: 'Staking is not live yet' });
-    if (!u.wallet) return res.status(400).json({ error: 'Sign in with a Solana wallet to unstake' });
-    if (!stakeLimit(u.id)) return res.status(429).json({ error: 'Slow down' });
-    const amount = req.body?.amount === 'all' || req.body?.amount == null ? null : Number(req.body.amount);
-    try {
-      const sig = await staking.unstake(u.id, u.wallet, amount);
-      res.json({ tx: sig, url: explorerTx(sig), ...staking.stakeOf(u.id) });
-    } catch (e) { res.status(400).json({ error: (e as Error).message }); }
-  });
-  app.post('/api/staking/claim', session, signedIn, async (req: AuthedReq, res) => {
-    const u = req.principal!.user;
-    if (!staking.stakingEnabled()) return res.status(503).json({ error: 'Staking is not live yet' });
-    if (!u.wallet) return res.status(400).json({ error: 'Sign in with a Solana wallet to claim' });
-    if (!stakeLimit(u.id)) return res.status(429).json({ error: 'Slow down' });
-    try { res.json(await staking.claimRewards(u.id, u.wallet)); } catch (e) { res.status(400).json({ error: (e as Error).message }); }
+    const referrals = (db.prepare('SELECT COALESCE(SUM(usd),0) s FROM referral_earnings').get() as { s: number }).s;
+    res.json({ paidToNodes, paidToReferrers: referrals, protocolRevenue: treasurySummary().profit ?? 0 });
   });
 
   // ------------------------------------------------------------------ OpenAI-compatible API

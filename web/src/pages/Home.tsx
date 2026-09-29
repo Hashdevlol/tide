@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { NODE_SHARE, NODE_SHARE_STAKED } from '@tide/shared';
+import { NODE_SHARE, REFERRAL_SHARE } from '@tide/shared';
 import { Sea } from '../components/Sea';
 import { Footer } from '../components/Nav';
 import { IconArrow } from '../components/Icons';
@@ -107,11 +107,11 @@ export default function Home() {
               <Link className="more" to="/earn">Start earning →</Link>
             </div>
             <div className="door">
-              <div className="tag">FOR THE OPEN-MODEL COMMUNITY</div>
-              <h3>Own a piece</h3>
-              <p>Tide is infrastructure that pays for itself. Protocol revenue buys back $TIDE: half is burned, half flows to the people who stake it.</p>
-              <ul><li>Revenue-backed buybacks</li><li>Stake $TIDE, earn the flow</li><li>Open treasury, on-chain</li></ul>
-              <a className="more" href="#token">See the tokenomics →</a>
+              <div className="tag">FOR EVERYONE</div>
+              <h3>Chat &amp; create</h3>
+              <p>Open models in a clean chat, with web search and an image studio. Try it without an account — free credits every day once you sign in.</p>
+              <ul><li>No account needed to start</li><li>Web search with sources</li><li>Nothing you type is stored</li></ul>
+              <Link className="more" to="/chat">Open chat →</Link>
             </div>
           </div>
         </div>
@@ -154,26 +154,30 @@ res = client.chat.completions.create({'\n'}
             <div className="step"><div className="n">01 · REQUEST</div><h4>You send a prompt</h4><p>Via chat or the API. Credits are held for the worst case and settled to the token.</p></div>
             <div className="step"><div className="n">02 · ROUTE</div><h4>The orchestrator flows it</h4><p>Jobs go to free nodes, weighted by measured speed. No free node? You wait in a fair queue.</p></div>
             <div className="step"><div className="n">03 · SERVE</div><h4>A node runs it</h4><p>A browser tab over WebGPU or a native GPU node streams tokens straight back to you.</p></div>
-            <div className="step"><div className="n">04 · SETTLE</div><h4>Everyone gets paid</h4><p>Nodes earn {Math.round(NODE_SHARE * 100)}% in USDC. Protocol fees buy back $TIDE for burns and stakers.</p></div>
+            <div className="step"><div className="n">04 · SETTLE</div><h4>Everyone gets paid</h4><p>Nodes earn {Math.round(NODE_SHARE * 100)}% of every paid token, in USDC. Referrers earn {Math.round(REFERRAL_SHARE * 100)}%.</p></div>
           </div>
         </div>
       </section>
 
-      <section id="token" style={{ paddingTop: 40 }}>
+      <section id="economics" style={{ paddingTop: 40 }}>
         <div className="wrap">
           <div className="token">
             <div>
-              <div className="eyebrow">// $TIDE</div>
-              <h2>Usage in.<br />Value out.</h2>
-              <p className="sub">Every paid token of inference sends protocol revenue into a buyback. What comes back gets split down the middle. Node operators staking ≥500k $TIDE earn {Math.round(NODE_SHARE_STAKED * 100)}% instead of {Math.round(NODE_SHARE * 100)}%.</p>
+              <div className="eyebrow">// where your dollar goes</div>
+              <h2>Most of it<br />flows to the GPUs.</h2>
+              <p className="sub">You pay per token, settled to the exact tokens delivered. The people whose hardware did the work get the biggest share, paid out in USDC.</p>
             </div>
             <div>
-              <div className="split-bar"><div className="burn">50% BURN</div><div className="stake">50% STAKERS</div></div>
-              <div className="legend">
-                <div><b>Ebb — burned</b>Half of every buyback is removed from supply forever.</div>
-                <div><b>Flow — staked</b>Half is streamed to $TIDE stakers, pro-rata.</div>
+              <div className="split-bar">
+                <div className="seg-nodes" style={{ flex: Math.round(NODE_SHARE * 100) }}>{Math.round(NODE_SHARE * 100)}% NODES</div>
+                <div className="seg-tide" style={{ flex: 25 }}>25% TIDE</div>
+                <div className="seg-ref" style={{ flex: Math.max(8, Math.round(REFERRAL_SHARE * 100)) }}>{Math.round(REFERRAL_SHARE * 100)}%</div>
               </div>
-              <p className="small muted" style={{ marginTop: 18 }}><Link className="link" to="/network#treasury">Watch the treasury live →</Link></p>
+              <div className="legend">
+                <div><b>Nodes — {Math.round(NODE_SHARE * 100)}%</b>Paid to whoever served your tokens, withdrawable in USDC from $1.</div>
+                <div><b>Tide — 25% · Referrer — {Math.round(REFERRAL_SHARE * 100)}%</b>Runs the orchestrator and funds free daily credits; referrers get a cut of what their invites spend.</div>
+              </div>
+              <p className="small muted" style={{ marginTop: 18 }}><Link className="link" to="/network#economics">See payouts live →</Link></p>
             </div>
           </div>
         </div>

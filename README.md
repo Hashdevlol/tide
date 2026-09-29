@@ -13,9 +13,8 @@ OpenAI-compatible API — no account wall, no prompt storage.
   │ (express)     │ ◀─────── │ queue · routing · billing │ ◀────────── │ llama.cpp / vLLM)      │
   └──────────────┘  tokens  │ canaries · anti-cheat     │   tokens    │ browser node (WebGPU)  │
                             └─────────────┬─────────────┘             └────────────────────────┘
-                                          │ margin                      Current (sharded engine,
-                                          ▼                             multi-GPU over WAN)
-                   treasury ── keeper: buyback + burn $TIDE · USDC rewards to stakers
+                                                                        Current (sharded engine,
+                                                                        multi-GPU over WAN)
 ```
 
 ## Repository
@@ -23,7 +22,7 @@ OpenAI-compatible API — no account wall, no prompt storage.
 | path | what |
 | --- | --- |
 | `shared/` | wire types + economics constants shared by everything |
-| `server/` | HTTP API, OpenAI-compatible `/v1`, orchestrator, billing, Solana rails, staking, keeper |
+| `server/` | HTTP API, OpenAI-compatible `/v1`, orchestrator, billing, USDC rails on Solana, admin console |
 | `node/` | `tide-node` — the agent a GPU owner runs (backends: Ollama, any OpenAI-compatible server, mock) |
 | `web/` | React app: landing, chat, earn (incl. in-browser WebGPU node), pricing, settings, network, docs |
 | `current/` | **Current**, the sharded multi-GPU engine — a fork of [leyten/shard](https://github.com/leyten/shard) (Apache-2.0, see `current/NOTICE`) |
@@ -104,17 +103,15 @@ passthrough, `max_tokens`, `-think` model suffix) · `GET /v1/balance`. Errors f
   credits. On completion it settles to the exact tokens delivered; if nothing was delivered it's refunded.
   Prices: $0.15 / M input, $0.90 / M output; 1 credit = $0.001; $1 of USDC buys 500 credits.
   Plans: Free 20 credits/day, Pro $12 (300/day), Max $30 (750/day).
-- **Node pay.** 70% of what the user paid (80% with ≥ 500k matured $TIDE staked). Referrers get 5%.
-  The rest is protocol margin → 50% buyback-and-burn, 50% USDC to stakers. Free prompts pay nodes from a
+- **Node pay.** 70% of what the user paid. Referrers get 5%. The rest is platform revenue.
+  Free prompts pay nodes from a
   capped treasury subsidy ($50/day, $3/hour).
 - **Anti-cheat.** Canary probes (arithmetic + nonce echo), impossible-speed and coherence checks, strikes and
   persistent bans, per-account/IP node caps, minimum account age for free-lane jobs.
 - **Privacy.** Prompts and outputs are never written to the database — only token counts for billing.
 - **Safety floor.** Only content sexualising minors is blocked (prompt and streamed output). Nothing else is moderated.
 - **USDC.** Each account gets a custodial deposit address; "check deposit" credits new USDC (or pays for an
-  open plan purchase) and sweeps it to the treasury. Node earnings and staker rewards are paid out in USDC.
-- **$TIDE.** Custodial staking: send $TIDE to your staking address; each lot matures after 24h; withdrawals
-  take the youngest lots first; no lockup. The keeper (`npm run keeper -w server`) runs daily, dry-run by default.
+  open plan purchase) and sweeps it to the treasury. Node earnings are paid out in USDC.
 
 ## Tests
 
@@ -130,13 +127,11 @@ cd current && python -m pytest tests/test_plan.py tests/test_verify*.py   # Curr
 | --- | --- |
 | ✅ | orchestrator, billing lanes, OpenAI API, node agent (Ollama / OpenAI-compat / mock), anti-cheat, web app |
 | ✅ | USDC deposits + plan checkout + payouts (code complete; devnet run needs a funded treasury) |
-| ✅ | $TIDE custodial staking, rewards, keeper (dormant until `TIDE_TOKEN_MINT` is set) |
 | ✅ | Current swarm control plane: key-proven announce, RTT mesh, `shard.plan` placement, ring assign/ready, head-routed jobs, `shard.verify` receipt settlement, pay-by-layers, dissolve/re-form (tested with fake rings + the real Python planner/verifier) |
 | ⏳ | `tide-node --mode current` engine launch (sidecar + `shard.stage` + `shard.coordinate`) — dry-run verified; needs Linux + NVIDIA GPUs + model weights |
 | ✅ | chat web search (`web_search` tool: Brave with `BRAVE_API_KEY`, otherwise keyless DuckDuckGo) |
 | ✅ | image generation: `/create` studio, `/v1/images/generations`, image nodes via ComfyUI (`--mode image`), 10 credits/image |
 | ✅ | operator console at `/admin` (set `ADMIN_SECRET`) |
-| ⏳ | self-custody on-chain staking program |
 
 ## Attribution
 

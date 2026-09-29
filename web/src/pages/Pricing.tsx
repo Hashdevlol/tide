@@ -17,7 +17,7 @@ const FAQ = [
   ['Do unused grant credits roll over?', 'No — the daily grant resets every day at 00:00 UTC. Credits you buy never expire.'],
   ['Why is pay-as-you-go more expensive than plans?', '$1 buys 500 credits pay-as-you-go ($0.002 each), while plans work out much cheaper per credit if you use them. Plans are the cheap path; pay-as-you-go is the flexible one.'],
   ['How am I charged if I stop an answer early?', 'Credits are held up front for the worst case, then settled to the exact tokens delivered. If nothing was generated, you are refunded in full.'],
-  ['Where does my money go?', 'Node operators receive 70% of what you pay (80% if they stake ≥500k $TIDE). The rest funds the protocol: $TIDE buybacks that are half burned and half streamed to stakers.'],
+  ['Where does my money go?', 'Node operators receive 70% of what you pay for the tokens their GPUs generate. If someone referred you, they get 5%. The rest keeps Tide running: the orchestrator, free daily credits and development.'],
   ['Are my prompts stored?', 'No. Prompts and outputs are streamed through the orchestrator to a node and back, and never written to our database. Chat history lives only in your browser.'],
   ['How do I pay?', 'Payments are in USDC on Solana. Checkout is rolling out now; until then local/dev builds can activate plans and add test credits from Settings.'],
 ];

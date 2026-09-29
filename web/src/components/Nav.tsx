@@ -9,7 +9,6 @@ export const NAV_LINKS = [
   { to: '/earn', label: 'Earn' },
   { to: '/pricing', label: 'Pricing' },
   { to: '/network', label: 'Network' },
-  { to: '/staking', label: 'Staking' },
   { to: '/docs', label: 'Docs' },
 ];
 
@@ -81,7 +80,7 @@ export function Footer() {
           </div>
           <div><h5>PRODUCT</h5><ul><li><Link to="/docs">API</Link></li><li><Link to="/chat">Chat</Link></li><li><Link to="/pricing">Pricing</Link></li><li><Link to="/earn">Earn</Link></li></ul></div>
           <div><h5>NETWORK</h5><ul><li><Link to="/network">Live stats</Link></li><li><Link to="/earn">Run a node</Link></li><li><Link to="/docs#nodes">Node docs</Link></li></ul></div>
-          <div><h5>$TIDE</h5><ul><li><Link to="/staking">Staking</Link></li><li><Link to="/#token">Tokenomics</Link></li><li><Link to="/network#treasury">Treasury</Link></li><li><Link to="/settings#account">Referrals</Link></li></ul></div>
+          <div><h5>EARN</h5><ul><li><Link to="/earn">Run a node</Link></li><li><Link to="/#economics">Where money goes</Link></li><li><Link to="/network#economics">Payouts</Link></li><li><Link to="/settings#account">Referrals</Link></li></ul></div>
           <div><h5>RESOURCES</h5><ul><li><Link to="/docs">Docs</Link></li><li><Link to="/pricing#faq">FAQ</Link></li><li><Link to="/settings#keys">API keys</Link></li></ul></div>
         </div>
         <div className="fine"><span>© 2026 Tide</span><span className="mono">≈ all systems flowing</span></div>

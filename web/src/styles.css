@@ -284,8 +284,9 @@ h1 em, h2 em { font-style: normal; background: linear-gradient(90deg, var(--foam
 .token { border: 1px solid var(--line); border-radius: 22px; padding: 56px; background: radial-gradient(ellipse at top right, rgba(61, 255, 194, .12), transparent 60%), var(--deep); display: grid; grid-template-columns: 1.1fr 1fr; gap: 48px; align-items: center; }
 .split-bar { display: flex; height: 64px; border-radius: 12px; overflow: hidden; font-family: var(--mono); font-size: 13px; font-weight: 600; }
 .split-bar div { display: flex; align-items: center; justify-content: center; }
-.burn { flex: 1; background: linear-gradient(90deg, #0E7A5C, var(--foam-dim)); color: var(--pearl); }
-.stake { flex: 1; background: linear-gradient(90deg, var(--foam-dim), var(--foam)); color: var(--abyss); }
+.seg-tide { flex: 1; background: linear-gradient(90deg, #0E7A5C, var(--foam-dim)); color: var(--pearl); }
+.seg-nodes { flex: 1; background: linear-gradient(90deg, var(--foam-dim), var(--foam)); color: var(--abyss); }
+.seg-ref { flex: 1; background: linear-gradient(90deg, #1b3f7a, #2a5aa3); color: var(--pearl); font-size: 11px; }
 .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 22px; font-size: 14px; color: var(--mist); }
 .legend b { display: block; color: var(--pearl); font-size: 15px; }
 

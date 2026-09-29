@@ -7,15 +7,5 @@ services:
       NODE_ENV: production
     ports: ["3001:3001"]
     volumes: ["tide-data:/data"]
-  keeper:
-    build: .
-    restart: unless-stopped
-    env_file: server/.env
-    environment:
-      NODE_ENV: production
-      TIDE_DB: /data/tide.db
-    command: ["node", "--import", "tsx", "scripts/keeper.ts"]
-    volumes: ["tide-data:/data"]
-    depends_on: [tide]
 volumes:
   tide-data:

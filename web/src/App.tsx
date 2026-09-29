@@ -10,13 +10,12 @@ const Pricing = lazy(() => import('./pages/Pricing'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Network = lazy(() => import('./pages/Network'));
 const Docs = lazy(() => import('./pages/Docs'));
-const Staking = lazy(() => import('./pages/Staking'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 const Admin = lazy(() => import('./pages/Admin'));
 const Create = lazy(() => import('./pages/Create'));
 
 const TITLES: Record<string, string> = {
-  '/chat': 'Chat', '/earn': 'Earn', '/pricing': 'Pricing', '/settings': 'Settings', '/network': 'Network', '/docs': 'API docs', '/staking': 'Staking', '/admin': 'Admin', '/create': 'Create',
+  '/chat': 'Chat', '/earn': 'Earn', '/pricing': 'Pricing', '/settings': 'Settings', '/network': 'Network', '/docs': 'API docs', '/admin': 'Admin', '/create': 'Create',
 };
 
 /** Scroll to top on navigation, or to #anchor when present. */
@@ -51,7 +50,6 @@ export function App() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/network" element={<Network />} />
           <Route path="/docs" element={<Docs />} />
-          <Route path="/staking" element={<Staking />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/create" element={<Create />} />
           <Route path="*" element={<NotFound />} />

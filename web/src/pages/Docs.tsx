@@ -247,7 +247,7 @@ npx tsx node/src/index.ts --token tnt_... --url ${origin} --backend mock`;
 
             <section id="nodes">
               <h2>Run a node</h2>
-              <p>Anyone can serve the network and earn USDC: nodes receive 70% of what users pay for the tokens they generate (80% with ≥500k $TIDE staked).</p>
+              <p>Anyone can serve the network and earn USDC: nodes receive 70% of what users pay for the tokens they generate.</p>
               <ul>
                 <li><b>Browser node</b> — open <Link className="link" to="/earn">Earn</Link>, sign in, click <i>Start earning</i>. Runs Qwen3 over WebGPU and serves <code>tide-lite</code>.</li>
                 <li><b>Native node</b> — create a node token (<code>tnt_…</code>) on the Earn page, then run the node agent. It benchmarks your backend (minimum 5 tok/s) and serves <code>tide-max</code>.</li>

@@ -36,7 +36,4 @@ export const config = {
   canaryCeiling: 180_000,
 
   minWithdrawalUsd: 1,
-  // Tokenomics split of realised margin (see treasury.ts)
-  marginToPoolPct: num(env.MARGIN_TO_POOL_PCT, 1.0),
-  poolBurnSplit: 0.5,
 };

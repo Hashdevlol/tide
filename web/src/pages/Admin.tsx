@@ -91,7 +91,7 @@ function Overview({ ov, onChange }: { ov: any; onChange: () => void }) {
         <Tile v={fmtUsd(ov.paidCreditsToday / 1000)} l="Paid usage today" s={`free subsidy ${fmtUsd(ov.subsidy.today)} today`} foam />
         <Tile v={fmtUsd(ov.liabilities.nodeOwed)} l="Owed to nodes" s="earned − paid out" />
         <Tile v={fmtInt(ov.liabilities.creditsOutstanding)} l="Credits outstanding" s={fmtUsd(ov.liabilities.creditsOutstanding / 1000) + ' of inference'} />
-        <Tile v={fmtUsd(ov.treasury.buyback ?? 0)} l="Buyback bucket" s={`stakers ${fmtUsd(ov.treasury.staker_rewards ?? 0)} · profit ${fmtUsd(ov.treasury.profit ?? 0)}`} />
+        <Tile v={fmtUsd(ov.treasury.profit ?? 0)} l="Platform revenue" s="after node + referral payouts" />
         <Tile v={fmtInt((pay.needs_review?.n ?? 0) + (pay.pending?.n ?? 0))} l="Payouts to resolve" s={`${fmtUsd((pay.needs_review?.usd ?? 0) + (pay.pending?.usd ?? 0))} held`} foam={!!pay.needs_review?.n} />
       </div>
 

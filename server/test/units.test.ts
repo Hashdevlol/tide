@@ -108,7 +108,7 @@ test('billing: anon session cap and earnings split', () => {
   const over = billing.reserve(getUser(anon.id)!, 1, opts);
   assert.ok('error' in over && over.code === 'FREE_EXHAUSTED');
 
-  // Paid job: node gets 70%, referrer 5%, rest to the pool (split burn / stakers).
+  // Paid job: node gets 70%, referrer 5%, the rest is platform revenue.
   const referrer = createUser('dev', { name: 'ref' });
   const payer = createUser('dev', { name: 'payer', ref: getUser(referrer.id)!.referral_code! });
   const owner = createUser('dev', { name: 'owner' });
@@ -123,8 +123,7 @@ test('billing: anon session cap and earnings split', () => {
   assert.equal(billing.recordEarning({ jobId: 'job-split', ownerId: owner.id, payerId: payer.id, hold: r.hold, charged, tokens: 50 }), 0, 'paid once');
   assert.ok(Math.abs(billing.nodeBalance(referrer.id).referral - 0.005) < 1e-9);
   const after = billing.treasurySummary();
-  assert.ok(Math.abs(after.buyback - before.buyback - 0.0125) < 1e-9);
-  assert.ok(Math.abs(after.staker_rewards - before.staker_rewards - 0.0125) < 1e-9);
+  assert.ok(Math.abs(after.profit - before.profit - 0.025) < 1e-9);
 });
 
 test('payouts: minimum, balance, one in flight', () => {
@@ -137,32 +136,4 @@ test('payouts: minimum, balance, one in flight', () => {
   assert.equal(billing.nodeBalance(owner.id).available, 2);
   billing.finishPayout(id, true, 'sig');
   assert.equal(billing.nodeBalance(owner.id).available, 2);
-});
-
-test('staking: lots, 24h maturity, LIFO withdrawals, pro-rata rewards, node boost', async () => {
-  const st = await import('../src/staking.ts');
-  const H = 3600_000, t0 = Date.now() - 100 * H;
-  const a = createUser('dev', { name: 'staker-a' }), b = createUser('dev', { name: 'staker-b' });
-  st.syncStake(a.id, 600_000, t0);             // old lot
-  st.syncStake(a.id, 700_000, t0 + 90 * H);    // +100k young lot (10h old)
-  let s = st.stakeOf(a.id);
-  assert.equal(s.total, 700_000);
-  assert.equal(s.matured, 600_000);
-  assert.ok(s.nextMaturity! > Date.now());
-  assert.equal(st.hasNodeBoost(a.id), true);
-  assert.equal(billing.nodeShareFor(a.id), 0.8);
-  st.syncStake(a.id, 550_000);                  // withdraw 150k: eats young 100k first, then 50k old
-  s = st.stakeOf(a.id);
-  assert.equal(s.total, 550_000);
-  assert.equal(s.matured, 550_000);
-  st.syncStake(b.id, 450_000, t0);
-  assert.equal(st.hasNodeBoost(b.id), false);
-  assert.equal(billing.nodeShareFor(b.id), 0.7);
-  const r = st.distributeRewards(10);
-  assert.equal(r.stakers, 2);
-  assert.ok(Math.abs(st.rewardsOf(a.id).claimable - 5.5) < 1e-6);
-  assert.ok(Math.abs(st.rewardsOf(b.id).claimable - 4.5) < 1e-6);
-  assert.ok(r.distributed <= 10);
-  st.syncStake(a.id, 0);
-  assert.equal(st.stakeOf(a.id).total, 0);
 });

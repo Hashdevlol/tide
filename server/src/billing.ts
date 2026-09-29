@@ -1,10 +1,9 @@
 import {
-  CREDITS_PER_USD, NODE_SHARE, NODE_SHARE_STAKED, PLANS, REFERRAL_SHARE, type ErrorCode, type Lane, type PlanId,
+  CREDITS_PER_USD, NODE_SHARE, PLANS, REFERRAL_SHARE, type ErrorCode, type Lane, type PlanId,
 } from '@tide/shared';
 import { db, now, tx, utcDay, utcHour } from './db.ts';
 import { config } from './config.ts';
 import type { User } from './auth.ts';
-import { hasNodeBoost } from './staking.ts';
 
 /**
  * A credit reservation for one job. Created before dispatch, settled once to the
@@ -60,7 +59,7 @@ function subsidySpent() {
 
 /** Would a worst-case node payout for this many credits still fit under today's free-subsidy caps? */
 export function subsidyRoom(credits: number): boolean {
-  const worst = (credits / CREDITS_PER_USD) * NODE_SHARE_STAKED;
+  const worst = (credits / CREDITS_PER_USD) * NODE_SHARE;
   const { d, h } = subsidySpent();
   return d + worst <= config.subsidyDailyCapUsd && h + worst <= config.subsidyHourlyCapUsd;
 }
@@ -178,9 +177,9 @@ export function settle(h: Hold, actual: number, ref: string): number {
 }
 
 // ---------- earnings + treasury ----------
-/** 70% of revenue, or 80% once the owner has >= 500k $TIDE matured stake. */
-export function nodeShareFor(ownerId: string): number {
-  return hasNodeBoost(ownerId) ? NODE_SHARE_STAKED : NODE_SHARE;
+/** Node owners earn 70% of what the user paid for their work. */
+export function nodeShareFor(_ownerId: string): number {
+  return NODE_SHARE;
 }
 
 /**
@@ -225,13 +224,10 @@ function bucketAdd(bucket: string, usd: number, event: string, meta?: string) {
   db.prepare('INSERT INTO treasury_ledger(event, bucket, usd, meta, created_at) VALUES (?, ?, ?, ?, ?)').run(event, bucket, usd, meta ?? null, now());
 }
 
-/** Margin -> pool (split burn / stakers) and profit. */
+/** What's left after the node and any referrer is platform revenue. */
 export function realizeMargin(margin: number, ref: string) {
   if (margin <= 0) return;
-  const pool = margin * config.marginToPoolPct;
-  bucketAdd('buyback', pool * config.poolBurnSplit, 'margin', ref);
-  bucketAdd('staker_rewards', pool * (1 - config.poolBurnSplit), 'margin', ref);
-  if (margin - pool > 0) bucketAdd('profit', margin - pool, 'margin', ref);
+  bucketAdd('profit', margin, 'margin', ref);
 }
 
 export function treasurySummary() {

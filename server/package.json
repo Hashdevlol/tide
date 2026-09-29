@@ -7,8 +7,7 @@
     "start": "node --env-file-if-exists=.env --import tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
-    "test:devnet": "node --env-file-if-exists=.env --import tsx scripts/devnet-e2e.ts",
-    "keeper": "node --env-file-if-exists=.env --import tsx scripts/keeper.ts"
+    "test:devnet": "node --env-file-if-exists=.env --import tsx scripts/devnet-e2e.ts"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.15",

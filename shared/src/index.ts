@@ -114,7 +114,6 @@ export const CREDITS_PER_USD_PURCHASED = 500; // pay-as-you-go buys at half valu
 export const PRICE_IN_PER_M_USD = 0.15;
 export const PRICE_OUT_PER_M_USD = 0.9;
 export const NODE_SHARE = 0.7;
-export const NODE_SHARE_STAKED = 0.8;
 export const REFERRAL_SHARE = 0.05;
 
 /** Credits for a text job, rounded up, minimum 1. Integer math in micro-credits to avoid float drift. */

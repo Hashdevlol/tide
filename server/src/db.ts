@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS subsidy_spend (
 );
 `);
 
-for (const b of ['buyback', 'staker_rewards', 'profit']) {
+for (const b of ['profit']) {
   db.prepare('INSERT OR IGNORE INTO treasury_buckets(bucket, usd) VALUES (?, 0)').run(b);
 }
 

@@ -7,15 +7,9 @@ import { Sea } from '../components/Sea';
 import { Footer } from '../components/Nav';
 
 export interface Treasury {
-  launched: boolean;
-  tokenMint: string | null;
-  pendingBuyback: number;
-  pendingStakerRewards: number;
   paidToNodes: number;
-  totalStaked?: number;
-  tideBurned?: number;
-  buybackSpentUsd?: number;
-  stakerRewardsPaidUsd?: number;
+  paidToReferrers: number;
+  protocolRevenue: number;
 }
 
 interface SwarmView {
@@ -133,27 +127,20 @@ export default function Network() {
             )) : <div className="empty">No nodes online. <Link className="link" to="/earn">Be the first →</Link></div>}
           </div>
 
-          <div className="card" id="treasury">
+          <div className="card" id="economics">
             <div className="card-head">
               <div>
-                <h3>Treasury</h3>
-                <p className="small muted">Protocol margin splits 50/50 into $TIDE buybacks (burned) and staker rewards.</p>
+                <h3>Payouts</h3>
+                <p className="small muted">Every paid token splits 70% to the node that served it, 5% to the referrer, and the rest to Tide.</p>
               </div>
-              <span className={`badge ${treasury?.launched ? 'foam' : ''}`}>{treasury?.launched ? '$TIDE live' : '$TIDE pre-launch'}</span>
             </div>
             <div className="grid grid-2" style={{ gap: 10 }}>
-              <div className="tile"><div className="v foam">{fmtUsd(treasury?.paidToNodes)}</div><div className="l">Paid to nodes</div></div>
-              <div className="tile"><div className="v">{fmtUsd(treasury?.pendingBuyback)}</div><div className="l">Pending buyback</div></div>
-              <div className="tile"><div className="v">{fmtUsd(treasury?.pendingStakerRewards)}</div><div className="l">Pending staker rewards</div></div>
-              <div className="tile"><div className="v">{fmtUsd(treasury?.stakerRewardsPaidUsd)}</div><div className="l">Rewards paid</div></div>
-              <div className="tile"><div className="v">{fmtUsd(treasury?.buybackSpentUsd)}</div><div className="l">Spent on buybacks</div></div>
-              <div className="tile"><div className="v">{fmtCompact(treasury?.tideBurned)}</div><div className="l">$TIDE burned</div></div>
+              <div className="tile"><div className="v foam">{fmtUsd(treasury?.paidToNodes, 4)}</div><div className="l">Earned by nodes</div></div>
+              <div className="tile"><div className="v">{fmtUsd(treasury?.paidToReferrers, 4)}</div><div className="l">Earned by referrers</div></div>
             </div>
             <div className="row-between small muted" style={{ marginTop: 14 }}>
-              <span>Total staked: <b className="mono" style={{ color: 'var(--pearl)' }}>{fmtCompact(treasury?.totalStaked)} $TIDE</b></span>
-              {treasury?.tokenMint
-                ? <span className="mono tiny">mint {shortAddr(treasury.tokenMint)}</span>
-                : <Link className="link" to="/staking">How staking works →</Link>}
+              <span>Withdrawals in USDC from $1.</span>
+              <Link className="link" to="/earn">Start earning →</Link>
             </div>
           </div>
         </div>

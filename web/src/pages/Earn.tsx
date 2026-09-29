@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { NODE_SHARE, NODE_SHARE_STAKED } from '@tide/shared';
+import { NODE_SHARE } from '@tide/shared';
 import { useAuth } from '../lib/auth';
 import { api, errMsg } from '../lib/api';
 import { useNodeStatus } from '../lib/socket';
@@ -29,7 +29,7 @@ export default function Earn() {
         <div className="page-head">
           <div className="eyebrow">// earn</div>
           <h1>Put your GPU in the <em>current</em>.</h1>
-          <p>Serve open models to the network and earn USDC for every token. Nodes earn <b className="foam">{Math.round(NODE_SHARE * 100)}%</b> of what users pay — <b className="foam">{Math.round(NODE_SHARE_STAKED * 100)}%</b> with ≥500k $TIDE staked.</p>
+          <p>Serve open models to the network and earn USDC for every token. Nodes earn <b className="foam">{Math.round(NODE_SHARE * 100)}%</b> of what users pay.</p>
         </div>
 
         {!signedIn && !loading && (
@@ -168,7 +168,7 @@ function BrowserTab({ signedIn, earnings }: { signedIn: boolean; earnings: Earni
 
       <div className="rate-strip card">
         <span>Nodes earn <b>{Math.round(NODE_SHARE * 100)}%</b> of what users pay</span>
-        <span><b>{Math.round(NODE_SHARE_STAKED * 100)}%</b> with ≥500k $TIDE staked</span>
+        <span>Referrers get <b>5%</b>, the platform keeps the rest</span>
         <span>Minimum <b>5 tok/s</b> to join</span>
         <span>Paid in <b>USDC</b> on Solana</span>
       </div>
