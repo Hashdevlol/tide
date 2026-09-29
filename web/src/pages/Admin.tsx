@@ -1,10 +1,11 @@
+import { API_URL } from '../lib/api';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { fmtDate, fmtInt, fmtUsd, shortAddr, timeAgo } from '../lib/format';
 
 const KEY = 'tide_admin_token';
 
 async function adm<T = any>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch('/api/admin' + path, {
+  const res = await fetch(API_URL + '/api/admin' + path, {
     method: body === undefined ? 'GET' : 'POST',
     headers: { 'x-admin-token': sessionStorage.getItem(KEY) ?? '', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),

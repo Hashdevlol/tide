@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import type { PlanId } from '@tide/shared';
 import { useAuth } from '../lib/auth';
-import { api, ApiError, errMsg } from '../lib/api';
+import { api, ApiError, errMsg, apiOrigin } from '../lib/api';
 import { clusterLabel, useDeposit, type PlanIntent } from '../lib/solana';
 import { DepositBox } from '../components/Deposit';
 import { fmtDate, fmtInt, fmtUsd, timeAgo } from '../lib/format';
@@ -330,7 +330,7 @@ function KeysTab() {
     try { await api(`/api/api-keys/${id}`, { method: 'DELETE' }); load(); } catch (err) { setError(errMsg(err)); }
   };
 
-  const base = `${location.origin}/v1`;
+  const base = `${apiOrigin()}/v1`;
   const key = fresh ?? 'sk-tide-...';
   const curl = `curl ${base}/chat/completions \\
   -H "Authorization: Bearer ${key}" \\

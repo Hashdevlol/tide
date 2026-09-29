@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import type { NetworkStats, NodeStatus } from '@tide/shared';
-import { getToken, onTokenChange } from './api';
+import { API_URL, getToken, onTokenChange } from './api';
 
 let socket: Socket | null = null;
 let lastToken: string | null = null;
@@ -10,7 +10,7 @@ let lastToken: string | null = null;
 export function getSocket(): Socket {
   if (!socket) {
     lastToken = getToken();
-    socket = io({
+    socket = io(API_URL || undefined, {
       transports: ['websocket'],
       auth: (cb) => cb({ token: getToken() ?? undefined }),
       reconnectionDelay: 1000,
@@ -52,7 +52,7 @@ export function useNetworkStats(): NetworkStats | null {
     getSocket();
     statsSubs.add(setStats);
     if (!lastStats) {
-      fetch('/api/stats').then((r) => r.json()).then((s: NetworkStats) => { if (!lastStats) { lastStats = s; setStats(s); } }).catch(() => {});
+      fetch(API_URL + '/api/stats').then((r) => r.json()).then((s: NetworkStats) => { if (!lastStats) { lastStats = s; setStats(s); } }).catch(() => {});
     }
     return () => { statsSubs.delete(setStats); };
   }, []);

@@ -1,3 +1,4 @@
+import { apiOrigin } from '../lib/api';
 import { Link } from 'react-router-dom';
 import { PRICE_IN_PER_M_USD, PRICE_OUT_PER_M_USD } from '@tide/shared';
 import { CodeBlock } from '../components/CopyButton';
@@ -28,7 +29,7 @@ const ERRORS = [
 ];
 
 export default function Docs() {
-  const origin = location.origin;
+  const origin = apiOrigin();
   const base = `${origin}/v1`;
 
   const curl = `curl ${base}/chat/completions \\

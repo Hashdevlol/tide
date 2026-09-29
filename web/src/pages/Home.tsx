@@ -6,7 +6,7 @@ import { NodeMascot } from '../components/Logo';
 import { NodeField } from '../components/NodeField';
 import { copyText } from '../components/CopyButton';
 import { useNetworkStats } from '../lib/socket';
-import { api } from '../lib/api';
+import { api, apiOrigin } from '../lib/api';
 import { useCountUp, useFeed, type FeedReceipt } from '../lib/live';
 import { fmtInt } from '../lib/format';
 
@@ -83,7 +83,7 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [paid, setPaid] = useState<number | undefined>(undefined);
   const [picked, setPicked] = useState(0);
-  const origin = typeof location !== 'undefined' ? location.origin : 'https://tide.network';
+  const origin = apiOrigin();
   const baseUrl = `${origin.replace(/^https?:\/\//, '')}/v1`;
 
   useEffect(() => {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { NODE_SHARE } from '@tide/shared';
 import { useAuth } from '../lib/auth';
-import { api, errMsg } from '../lib/api';
+import { api, errMsg, apiOrigin } from '../lib/api';
 import { useNodeStatus } from '../lib/socket';
 import { duration, fmtDate, fmtInt, fmtUsd, timeAgo } from '../lib/format';
 import {
@@ -215,7 +215,7 @@ function MachineTab({ signedIn }: { signedIn: boolean }) {
   };
 
   const b = BACKENDS.find((x) => x.id === backend)!;
-  const cmd = `npx tsx node/src/index.ts --token ${fresh ?? '<your tnt_ token>'} --url ${location.origin} ${b.args}`;
+  const cmd = `npx tsx node/src/index.ts --token ${fresh ?? '<your tnt_ token>'} --url ${apiOrigin()} ${b.args}`;
 
   return (
     <div className="stack" style={{ gap: 18 }}>
